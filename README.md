@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="assets/logo.png" alt="ZPTTLink Logo" width="200"/>
+</p>
+
+
+
 ZPTTLink
 ========
 
