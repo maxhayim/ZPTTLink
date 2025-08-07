@@ -1,0 +1,5 @@
+pyserial
+pycaw; platform_system == "Windows"
+pyobjc; platform_system == "Darwin"
+pynput
+sounddevice
