@@ -1,25 +1,89 @@
-# ZPTTLink
+ZPTTLink
+========
 
-ZPTTLink is an open-source, cross-platform utility that connects Zello (running inside BlueStacks) to ham radio gateway hardware like the AIOC (All-In-One Cable). It enables real-time Push-to-Talk (PTT) control and audio routing between your radio and Zello using only your desktop computer. This allows radio operators to build digital voice gateways for GMRS, ham radio, or emergency communications.
+ZPTTLink is an open-source, cross-platform application that bridges Zello (running inside BlueStacks) with radio gateway hardware like the AIOC (All-In-One Cable): https://github.com/skuep/AIOC. It enables seamless Push-to-Talk (PTT) control and audio routing, allowing users to link RF radios to Zello using only a desktop computer.
 
-The AIOC hardware used with ZPTTLink is developed as an open-source project and can be found at https://github.com/skuep/AIOC. It combines audio and PTT over USB and is compatible with various radios through standard mic connectors.
+This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.
 
-To begin, install Python 3.8 or newer. On Windows, download it from https://www.python.org/downloads/windows and make sure to check the box that says “Add Python to PATH” during installation. On macOS, the easiest way is to install it via Homebrew by running `brew install python` from Terminal.
+Features
+--------
 
-Next, you need a virtual audio driver to route your radio’s microphone signal into BlueStacks. For Windows, go to https://vb-audio.com/Cable and download VB-Cable. For macOS, use BlackHole from https://existential.audio/blackhole. If you're on macOS, after installing BlackHole, open the “Audio MIDI Setup” app and create a multi-output device that includes BlackHole and your regular audio output so you can hear and send audio at the same time.
+- Compatible with AIOC, CM108-based, and other USB serial/audio radio cables
+- Detects PTT signals via USB serial
+- Simulates keypresses or mouse events to trigger Zello’s Push-to-Talk
+- Cross-platform support for Windows and macOS
+- GUI for selecting serial ports, audio devices, and hotkey assignment
+- Audio routing via VB-Cable (Windows) or BlackHole (macOS)
 
-Now that your audio routing is in place, download ZPTTLink by opening a terminal or command prompt and running `git clone https://github.com/maxhayim/ZPTTLink.git`. Then navigate into the folder with `cd ZPTTLink`.
+Requirements
+------------
 
-Create a virtual Python environment to isolate the project dependencies. On Windows, run `python -m venv venv` followed by `venv\Scripts\activate`. On macOS, use `python3 -m venv venv` and activate it with `source venv/bin/activate`. Once inside the virtual environment, install the required libraries using `pip install -r requirements.txt`.
+- AIOC or compatible USB PTT/audio interface
+- Python 3.8 or newer
+- Zello installed inside BlueStacks
+- Virtual audio driver:
+  - VB-Cable: https://vb-audio.com/Cable/
+  - BlackHole: https://existential.audio/blackhole/
 
-You can now run the application with `python src/main.py`. A graphical window will appear. In this interface, select your serial port that corresponds to your AIOC device — for example, COM3 on Windows or /dev/tty.usbmodemXXXX on macOS. Then choose the appropriate audio input and output devices, and assign a hotkey (such as F8) that will be used to trigger Zello’s push-to-talk.
+Installation and Setup
+----------------------
 
-Launch BlueStacks and open the Zello app. Go into Zello’s settings, find the Push-to-Talk configuration, and set the same hotkey you chose in ZPTTLink. Also make sure Zello is using the virtual audio cable (VB-Cable or BlackHole) as its microphone input.
+1. Install Python:
+   - Windows: https://www.python.org/downloads/windows
+   - macOS: Use Homebrew with: brew install python
 
-With everything configured, press the physical PTT button on your AIOC cable. ZPTTLink will detect the signal over USB serial, simulate a keyboard press to trigger Zello, and send audio through the virtual audio cable into BlueStacks. Your radio is now effectively linked to Zello.
+2. Install virtual audio driver:
+   - Windows: Install VB-Cable from https://vb-audio.com/Cable/
+   - macOS: Install BlackHole from https://existential.audio/blackhole/
 
-ZPTTLink allows anyone to bridge a physical radio to Zello using open-source tools and minimal hardware. This solution is designed for GMRS operators, ham radio users, emergency communications volunteers, and anyone interested in integrating voice-over-IP with their existing radio setup. The project runs on both Windows and macOS.
+3. Clone the repository:
+   git clone https://github.com/maxhayim/ZPTTLink.git
+   cd ZPTTLink
 
-ZPTTLink is released under the MIT License. Contributions are welcome via pull request.
+4. Create and activate a virtual environment:
+   - Windows:
+     python -m venv venv
+     venv\Scripts\activate
+   - macOS:
+     python3 -m venv venv
+     source venv/bin/activate
 
+5. Install dependencies:
+   pip install -r requirements.txt
 
+Usage
+-----
+
+1. Run the app:
+   python src/main.py
+
+2. In the GUI:
+   - Select your USB serial port (e.g., COM3 or /dev/tty.usbmodem)
+   - Choose audio input and output devices
+   - Set a hotkey (e.g., F8)
+
+3. Launch Zello inside BlueStacks:
+   - Go to Zello settings and assign the same hotkey (e.g., F8)
+   - Select the virtual audio driver as the microphone input
+
+4. Press the PTT button on your radio cable. ZPTTLink will detect it, simulate a keypress, and Zello will transmit your audio.
+
+How It Works
+------------
+
+ZPTTLink listens to the USB serial signal from your radio cable. When activated, it simulates a keypress or mouse event to trigger Zello in BlueStacks. Audio from your radio is routed using the virtual audio driver, creating a seamless RF-to-Zello link.
+
+License
+-------
+
+MIT License
+
+Contributing
+------------
+
+Pull requests are welcome. Open an issue first to discuss ideas or report bugs.
+
+Related Projects
+----------------
+
+AIOC - All-In-One Cable for Ham Radio: https://github.com/skuep/AIOC
