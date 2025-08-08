@@ -1,0 +1,6 @@
+{
+    "com_port": "COM3",
+    "audio_input": "AIOC Microphone",
+    "audio_output": "AIOC Speaker",
+    "ptt_hotkey": "F9"
+}
