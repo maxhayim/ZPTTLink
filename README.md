@@ -60,19 +60,22 @@ Installation and Setup
 Usage
 -----
 
-1. Run the app:
-   python src/main.py
+1. Activate your virtual environment:
+   source venv/bin/activate
 
-2. In the GUI:
-   - Select your USB serial port (e.g., COM3 or /dev/tty.usbmodem)
-   - Choose audio input and output devices
-   - Set a hotkey (e.g., F8)
+2. Run ZPTTLink:
+   python -m zpttlink
 
-3. Launch Zello inside BlueStacks:
-   - Go to Zello settings and assign the same hotkey (e.g., F8)
+3. Once running, you can use:
+   - help — Displays available commands and usage information
+   - q or quit — Safely exits the program
+
+4. Launch Zello inside BlueStacks:
+   - Assign the same hotkey in Zello (e.g., F8 or F9)
    - Select the virtual audio driver as the microphone input
 
-4. Press the PTT button on your radio cable. ZPTTLink will detect it, simulate a keypress, and Zello will transmit your audio.
+5. Press the PTT button on your radio cable (e.g., AIOC).
+   ZPTTLink will detect it, simulate a keypress, and Zello will transmit your audio.
 
 How It Works
 ------------
