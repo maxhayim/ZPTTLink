@@ -1,7 +1,17 @@
-cat > requirements.txt << 'EOF'
+# Core
 pyserial
 pynput
 sounddevice
+numpy
+loguru
+platformdirs
+
+# macOS
 pyobjc; platform_system == "Darwin"
+
+# Windows
 pycaw; platform_system == "Windows"
-EOF
+
+# Linux
+pulsectl; platform_system == "Linux"
+pyalsa; platform_system == "Linux"
