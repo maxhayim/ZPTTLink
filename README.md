@@ -9,111 +9,136 @@
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
   </a>
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform">
 </p>
 
-ZPTTLink
-========
+<h1>ZPTTLink</h1>
 
-ZPTTLink is an open-source, cross-platform application that bridges Zello (running inside BlueStacks) with radio gateway hardware like the AIOC (All-In-One Cable): https://github.com/skuep/AIOC. It enables seamless Push-to-Talk (PTT) control and audio routing, allowing users to link RF radios to Zello using only a desktop computer.
+<p>ZPTTLink is an open-source, cross-platform application that bridges Zello (running inside <a href="https://www.bluestacks.com/">BlueStacks</a> or <a href="https://waydro.id/">Waydroid</a>) with radio gateway hardware like the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>. It enables seamless Push-to-Talk (PTT) control and audio routing, allowing users to link RF radios to Zello using only a computer.</p>
 
-This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.
+<p>This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.</p>
 
-Features
---------
+<h2>Features</h2>
 
-- Compatible with AIOC, CM108-based, and other USB serial/audio radio cables
-- Detects PTT signals via USB serial
-- Simulates keypresses or mouse events to trigger Zello’s Push-to-Talk
-- Cross-platform support for Windows and macOS
-- Minimal and simple (KISS — no GUI required)
-- Audio routing via VB-Cable (Windows) or BlackHole (macOS)
+<ul>
+  <li>Compatible with AIOC, CM108-based, and other USB serial/audio radio cables</li>
+  <li>Detects PTT signals via USB serial</li>
+  <li>Simulates keypresses or mouse events to trigger Zello’s Push-to-Talk</li>
+  <li>Cross-platform support for Windows, macOS, and Linux</li>
+  <li>Minimal and simple (KISS — no GUI required)</li>
+  <li>Audio routing via <a href="https://vb-audio.com/Cable/">VB-Cable (Windows)</a>, <a href="https://existential.audio/blackhole/">BlackHole (macOS)</a>, or <a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback (Linux)</a></li>
+</ul>
 
-Requirements
-------------
+<h2>Requirements</h2>
 
-- AIOC or compatible USB PTT/audio interface
-- Python 3.8 or newer
-- Zello installed inside BlueStacks
-- Virtual audio driver:
-  - VB-Cable: https://vb-audio.com/Cable/
-  - BlackHole: https://existential.audio/blackhole/
+<ul>
+  <li>AIOC or compatible USB PTT/audio interface</li>
+  <li>Python 3.8 or newer</li>
+  <li>Zello installed inside <a href="https://www.bluestacks.com/">BlueStacks</a> or <a href="https://waydro.id/">Waydroid</a></li>
+  <li>Virtual audio driver:
+    <ul>
+      <li><a href="https://vb-audio.com/Cable/">VB-Cable (Windows)</a></li>
+      <li><a href="https://existential.audio/blackhole/">BlackHole (macOS)</a></li>
+      <li><a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback (Linux)</a></li>
+    </ul>
+  </li>
+</ul>
 
-Installation and Setup
-----------------------
+<h2>Installation and Setup</h2>
 
-1. Install Python:
-   - Windows: https://www.python.org/downloads/windows
-   - macOS: Use Homebrew with:
-     ```
-     brew install python
-     ```
+<ol>
+  <li>Install Python:
+    <ul>
+      <li><a href="https://www.python.org/downloads/windows">Windows</a></li>
+      <li>macOS: Use Homebrew:
+        <pre><code>brew install python</code></pre>
+      </li>
+      <li>Linux: Use your package manager (example for Debian/Ubuntu):
+        <pre><code>sudo apt install python3 python3-venv</code></pre>
+      </li>
+    </ul>
+  </li>
 
-2. Install virtual audio driver:
-   - Windows: Install VB-Cable from https://vb-audio.com/Cable/
-   - macOS: Install BlackHole from https://existential.audio/blackhole/
+  <li>Install virtual audio driver (choose your OS above).</li>
 
-3. Clone the repository:
-git clone https://github.com/maxhayim/ZPTTLink.git
-cd ZPTTLink
+  <li>Clone the repository:
+    <pre><code>git clone https://github.com/maxhayim/ZPTTLink.git
+cd ZPTTLink</code></pre>
+  </li>
 
-4. Create and activate a virtual environment:
-- Windows:
-  ```
-  python -m venv venv
-  venv\Scripts\activate
-  ```
-- macOS:
-  ```
-  python3 -m venv venv
-  source venv/bin/activate
-  ```
+  <li>Create and activate a virtual environment:
+    <ul>
+      <li>Windows:
+        <pre><code>python -m venv venv
+venv\Scripts\activate</code></pre>
+      </li>
+      <li>macOS/Linux:
+        <pre><code>python3 -m venv venv
+source venv/bin/activate</code></pre>
+      </li>
+    </ul>
+  </li>
 
-5. Install dependencies:
-pip install -r requirements.txt
+  <li>Install dependencies:
+    <pre><code>pip install -r requirements.txt</code></pre>
+  </li>
+</ol>
 
-Usage
------
+<h2>Usage</h2>
 
-1. Activate your virtual environment:
-source venv/bin/activate
+<ol>
+  <li>Activate your virtual environment:
+    <pre><code>source venv/bin/activate</code></pre>
+  </li>
 
-2. Run ZPTTLink:
-python -m zpttlink
+  <li>Run ZPTTLink:
+    <pre><code>python -m zpttlink</code></pre>
+  </li>
 
-3. Once running, you can use:
-- `help` — Displays available commands and usage information
-- `q` or `quit` — Safely exits the program
+  <li>Available commands:
+    <ul>
+      <li><code>help</code> — Displays available commands and usage info</li>
+      <li><code>q</code> or <code>quit</code> — Safely exits the program</li>
+    </ul>
+  </li>
 
-4. Launch Zello inside BlueStacks:
-- Assign the same hotkey in Zello (e.g., F8 or F9)
-- Select the virtual audio driver as the microphone input
+  <li>Launch Zello inside BlueStacks or Waydroid:
+    <ul>
+      <li>Assign the same hotkey in Zello (e.g., F8 or F9)</li>
+      <li>Select the virtual audio driver as the microphone input</li>
+    </ul>
+  </li>
 
-5. Press the PTT button on your radio cable (e.g., AIOC).  
-ZPTTLink will detect it, simulate a keypress, and Zello will transmit your audio.
+  <li>Press the PTT button on your radio cable (e.g., AIOC).  
+  ZPTTLink will detect it, simulate a keypress, and Zello will transmit your audio.</li>
+</ol>
 
-How It Works
-------------
+<h2>How It Works</h2>
 
-ZPTTLink listens to the USB serial signal from your radio cable. When activated, it simulates a keypress or mouse event to trigger Zello in BlueStacks. Audio from your radio is routed using the virtual audio driver, creating a seamless RF-to-Zello link.
+<p>ZPTTLink listens to the USB serial signal from your radio cable. When activated, it simulates a keypress or mouse event to trigger Zello in BlueStacks or Waydroid. Audio from your radio is routed using the virtual audio driver, creating a seamless RF-to-Zello link.</p>
 
-License
--------
+<h2>License</h2>
 
-MIT License
+<p>MIT License</p>
 
-Contributing
-------------
+<h2>Contributing</h2>
 
-Pull requests are welcome. Open an issue first to discuss ideas or report bugs.
+<p>Pull requests are welcome. Open an issue first to discuss ideas or report bugs.</p>
 
-Related Projects
-----------------
+<h2>Related Projects</h2>
 
-AIOC - All-In-One Cable for Ham Radio: https://github.com/skuep/AIOC
+<ul>
+  <li><a href="https://github.com/skuep/AIOC">AIOC – All-In-One Cable for Ham Radio</a></li>
+  <li><a href="https://vb-audio.com/Cable/">VB-Cable</a></li>
+  <li><a href="https://existential.audio/blackhole/">BlackHole</a></li>
+  <li><a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback</a></li>
+  <li><a href="https://www.bluestacks.com/">BlueStacks</a></li>
+  <li><a href="https://waydro.id/">Waydroid</a></li>
+</ul>
 
-Acknowledgments
----------------
+<h2>Acknowledgments</h2>
 
-Portions of this project are based on or inspired by the AIOC project by skuep (https://github.com/skuep/AIOC).  
-Zello® for Android is a trademark of Zello Inc., Android™ is a trademark of Google LLC, and both are used here solely for interoperability purposes.  All other trademarks are the property of their respective owners.
+<p>Portions of this project are based on or inspired by the <a href="https://github.com/skuep/AIOC">AIOC (All-in-one-Cable)</a>.<br>  
+Zello® for Android is a trademark of Zello Inc., Android™ is a trademark of Google LLC, and both are used here solely for interoperability purposes.  
+All other trademarks are the property of their respective owners.</p>
+
