@@ -35,14 +35,30 @@
   <li>AIOC or compatible USB PTT/audio interface</li>
   <li>Python 3.8 or newer</li>
   <li>Zello installed inside <a href="https://www.bluestacks.com/">BlueStacks</a> or <a href="https://waydro.id/">Waydroid</a></li>
-  <li>Virtual audio driver:
-    <ul>
-      <li><a href="https://vb-audio.com/Cable/">VB-Cable (Windows)</a></li>
-      <li><a href="https://existential.audio/blackhole/">BlackHole (macOS)</a></li>
-      <li><a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback (Linux)</a></li>
-    </ul>
-  </li>
 </ul>
+
+<h3>Python Dependencies</h3>
+
+<p>Install all dependencies with:</p>
+
+<pre><code>pip install -r requirements.txt
+</code></pre>
+
+<ul>
+  <li><strong>Core:</strong> pyserial, pynput, sounddevice, numpy, loguru, platformdirs</li>
+  <li><strong>Windows:</strong> pycaw</li>
+  <li><strong>macOS:</strong> pyobjc</li>
+  <li><strong>Linux:</strong> pulsectl, pyalsa</li>
+</ul>
+
+<h3>Linux Notes</h3>
+
+<ul>
+  <li>ZPTTLink works with both <a href="https://www.alsa-project.org/wiki/Main_Page">ALSA</a> and <a href="https://www.freedesktop.org/wiki/Software/PulseAudio/">PulseAudio</a>.</li>
+  <li>If your system uses <a href="https://pipewire.org/">PipeWire</a>, make sure the <strong>PulseAudio compatibility layer</strong> is enabled so <code>pulsectl</code> can function correctly.</li>
+  <li>ALSA Loopback must be enabled for audio routing. See: <a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback Device</a>.</li>
+</ul>
+
 
 <h2>Installation and Setup</h2>
 
