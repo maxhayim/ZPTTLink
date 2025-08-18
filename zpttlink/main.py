@@ -211,6 +211,224 @@ def wayland_warning_if_needed():
             "If PTT doesn’t work, try an X11 session or a tool like 'ydotool'."
         )
 
+# ------------------- Optional dependency checks -------------------
+def check_optional_deps():
+    """
+    Warn clearly if platform-specific optional pieces are missing or likely misconfigured.
+    Keeps runtime KISS (no hard failure unless absolutely required).
+    """
+    osname = platform.system()
+
+    # sounddevice is useful for listing devices and confirming PortAudio backends
+    if sd is None:
+        logger.warning(
+            "Python 'sounddevice' not available; audio device listing is disabled.\n"
+            "Install with: pip install sounddevice\n"
+            "Windows/macOS: also install your virtual audio driver (VB-Cable/BlackHole).\n"
+            "Linux: ensure ALSA and PortAudio libs are present."
+        )
+    else:
+        # On Linux, gently hint about ALSA loopback if not present
+        if osname == "Linux":
+            # Heuristic check for ALSA loopback presence
+            loop_candidates = ["/dev/snd/loop0", "/proc/asound/Loopback", "/proc/asound/cards"]
+            found_loop = any(os.path.exists(p) and ("Loopback" in open(p).read() if p.endswith("cards") else True)
+                             for p in loop_candidates if os.path.exists(p))
+            if not found_loop:
+                logger.warning(
+                    "ALSA Loopback not detected. For virtual routing, enable it with:\n"
+                    "  sudo modprobe snd-aloop\n"
+                    "To load at boot, add 'snd-aloop' to /etc/modules-load.d/alsa-loopback.conf"
+                )
+
+    if osname == "Darwin":
+        # pyobjc isn’t strictly required for this KISS build, but it’s a common dependency for macOS integrations.
+        try:
+            import objc  # noqa: F401
+        except Exception:
+            logger.warning(
+                "macOS: 'pyobjc' not found. If you encounter macOS-specific integration issues, install it:\n"
+                "  pip install pyobjc"
+            )
+        logger.info(
+           
+from pynput.keyboard import Controller, Key
+
+APP_NAME = "zpttlink"
+DEFAULT_KEY = "f9"
+DEFAULT_LOGFILE = "zpttlink.log"
+
+stop_event = threading.Event()
+keyboard = None
+logger = None
+
+KEYMAP = {
+    "f1": Key.f1, "f2": Key.f2, "f3": Key.f3, "f4": Key.f4, "f5": Key.f5,
+    "f6": Key.f6, "f7": Key.f7, "f8": Key.f8, "f9": Key.f9, "f10": Key.f10,
+    "f11": Key.f11, "f12": Key.f12,
+    # add more if you like
+}
+
+# ------------------- Logging -------------------
+def setup_logging(level="INFO", logfile=DEFAULT_LOGFILE):
+    lg = logging.getLogger(APP_NAME)
+    lg.setLevel(level.upper())
+    fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", "%H:%M:%S")
+
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    lg.addHandler(ch)
+
+    try:
+        fh = RotatingFileHandler(logfile, maxBytes=512 * 1024, backupCount=2)
+        fh.setFormatter(fmt)
+        lg.addHandler(fh)
+    except Exception:
+        # File logging not critical
+        pass
+    return lg
+
+# ------------------- Config -------------------
+DEFAULT_CONFIG = {
+    "ptt": {
+        "key": DEFAULT_KEY,
+    },
+    "serial": {
+        "port": "",
+        "match": ["usb", "ttyacm", "ttyusb", "usbmodem", "usbserial"],  # auto-detect hints
+        "baudrate": 9600,
+    },
+    "debounce": {
+        "press_ms": 30,
+        "release_ms": 60,
+    },
+    "audio": {
+        "input_match":  ["AIOC", "VB-Audio", "BlackHole", "ALSA"],
+        "output_match": ["AIOC", "VB-Audio", "BlackHole", "ALSA"],
+    },
+    "logging": {
+        "level": "INFO",
+        "file": DEFAULT_LOGFILE,
+    },
+}
+
+def load_config(path="config.toml"):
+    cfg = DEFAULT_CONFIG.copy()
+    if os.path.isfile(path):
+        try:
+            with open(path, "rb") as f:
+                data = load_toml_bytes(f.read())
+            # shallow merge (KISS)
+            for section, values in (data or {}).items():
+                if isinstance(values, dict):
+                    cfg.setdefault(section, {})
+                    cfg[section].update(values)
+                else:
+                    cfg[section] = values
+        except Exception:
+            # Non-fatal: keep defaults
+            pass
+    return cfg
+
+# ------------------- Serial helpers -------------------
+def list_serial_ports():
+    ports = list(list_ports.comports())
+    return ports
+
+def autodetect_serial(match_substrings):
+    ports = list_serial_ports()
+    ranked = []
+    for p in ports:
+        score = 0
+        text = f"{p.device} {p.description} {p.hwid}".lower()
+        for s in match_substrings:
+            if s.lower() in text:
+                score += 1
+        ranked.append((score, p.device))
+    ranked.sort(reverse=True)
+    return ranked[0][1] if ranked else None
+
+# ------------------- Audio listing -------------------
+def list_audio_devices():
+    if not sd:
+        print("sounddevice not available; cannot list audio devices.")
+        return
+    try:
+        devices = sd.query_devices()
+        for i, dev in enumerate(devices):
+            name = dev.get("name")
+            host = dev.get("hostapi")
+            print(f"[{i}] {name} (hostapi={host})")
+    except Exception as e:
+        print(f"Failed to query audio devices: {e}")
+
+# ------------------- Keyboard control -------------------
+def key_down(k, dry=False):
+    if dry:
+        logger.debug(f"[DRY] key_down({k})")
+        return
+    try:
+        keyboard.press(KEYMAP.get(k.lower(), Key.f9))
+    except Exception as e:
+        logger.error(f"Keyboard control failed on key_down: {e}")
+        raise
+
+def key_up(k, dry=False):
+    if dry:
+        logger.debug(f"[DRY] key_up({k})")
+        return
+    try:
+        keyboard.release(KEYMAP.get(k.lower(), Key.f9))
+    except Exception as e:
+        logger.error(f"Keyboard control failed on key_up: {e}")
+        raise
+
+def make_handlers(key_name, dry_run=False):
+    def on_press():
+        logger.info("PTT DOWN -> key down")
+        key_down(key_name, dry=dry_run)
+    def on_release():
+        logger.info("PTT UP   -> key up")
+        key_up(key_name, dry=dry_run)
+    return on_press, on_release
+
+# ------------------- PTT loop (modem lines) -------------------
+def read_ptt_loop(ser, on_press, on_release, press_ms=30, release_ms=60):
+    was_down = False
+    last_change = 0.0
+    try:
+        while not stop_event.is_set():
+            # Consider any asserted modem line as “PTT down”
+            down = bool(ser.cts or ser.dsr or ser.cd)
+            now = time.time() * 1000.0
+            if down != was_down:
+                # apply debounce depending on direction
+                needed = press_ms if down else release_ms
+                if (now - last_change) >= needed:
+                    was_down = down
+                    last_change = now
+                    if down:
+                        on_press()
+                    else:
+                        on_release()
+            time.sleep(0.005)  # 5 ms tick
+    finally:
+        # Make sure we release the key if we exit while down
+        if was_down:
+            on_release()
+
+# ------------------- Signals -------------------
+def handle_stop_signal(*_):
+    logger.info("Shutting down...")
+    stop_event.set()
+
+def wayland_warning_if_needed():
+    if platform.system() == "Linux" and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+        logger.warning(
+            "Wayland session detected. Global key injection may be blocked.\n"
+            "If PTT doesn’t work, try an X11 session or a tool like 'ydotool'."
+        )
+
 # ------------------- Main -------------------
 def main():
     # Parse CLI args
