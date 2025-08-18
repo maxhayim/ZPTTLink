@@ -1,5 +1,7 @@
+cat > requirements.txt << 'EOF'
 pyserial
-pycaw; platform_system == "Windows"
-pyobjc; platform_system == "Darwin"
 pynput
 sounddevice
+pyobjc; platform_system == "Darwin"
+pycaw; platform_system == "Windows"
+EOF
