@@ -128,12 +128,12 @@ source venv/bin/activate</code></pre>
 <h2>Related Projects</h2>
 
 <ul>
-  <li><a href="https://github.com/skuep/AIOC">AIOC – All-In-One Cable for Ham Radio</a></li>
-  <li><a href="https://vb-audio.com/Cable/">VB-Cable</a></li>
-  <li><a href="https://existential.audio/blackhole/">BlackHole</a></li>
-  <li><a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback</a></li>
-  <li><a href="https://www.bluestacks.com/">BlueStacks</a></li>
-  <li><a href="https://waydro.id/">Waydroid</a></li>
+  <li><a href="https://github.com/skuep/AIOC">AIOC – All-In-One Cable</a></li>
+  <li><a href="https://github.com/ExistentialAudio/BlackHole">BlackHole (macOS)</a></li>
+  <li><a href="https://github.com/alsa-project/alsa-utils">ALSA Utils / Loopback (Linux)</a></li>
+  <li><a href="https://github.com/bluestacks">BlueStacks</a></li>
+  <li><a href="https://github.com/waydroid">Waydroid</a></li>
+  <li><a href="https://github.com/vb-audio-software">VB-Audio (VB-Cable)</a></li>
 </ul>
 
 <h2>Acknowledgments</h2>
