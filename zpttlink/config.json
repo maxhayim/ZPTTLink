@@ -1,6 +1,15 @@
 {
-    "com_port": "COM3",
-    "audio_input": "AIOC Microphone",
-    "audio_output": "AIOC Speaker",
-    "ptt_hotkey": "F9"
+  "com_port": "COM3",
+  "audio_input": "AIOC Microphone",
+  "audio_output": "AIOC Speaker",
+  "ptt_hotkey": "F9",
+  "logging": {
+    "level": "INFO",
+    "file": "zpttlink.log"
+  },
+  "debounce": {
+    "press_ms": 30,
+    "release_ms": 60"
+  },
+  "serial_autodetect_hints": ["usb", "ttyacm", "ttyusb", "usbmodem", "usbserial", "aioc", "cm108"]
 }
