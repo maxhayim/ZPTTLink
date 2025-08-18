@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import platform
@@ -11,45 +12,54 @@ from logging.handlers import RotatingFileHandler
 import serial
 from serial.tools import list_ports
 
-# ---- Config loader: tomllib (3.11+) or tomli (<=3.10) ----
-try:
-    import tomllib  # Python 3.11+
-    def load_toml_bytes(b: bytes):
-        return tomllib.loads(b.decode("utf-8"))
-except Exception:
-    try:
-        import tomli  # Python 3.8–3.10 (add 'tomli' to requirements.txt)
-        def load_toml_bytes(b: bytes):
-            return tomli.loads(b.decode("utf-8"))
-    except Exception:
-        tomli = None
-        tomllib = None
-        def load_toml_bytes(_b: bytes):
-            return {}
-
-# ---- Optional audio device listing (no routing; KISS) ----
+# Optional: audio device listing (no routing; KISS)
 try:
     import sounddevice as sd
 except Exception:
     sd = None
 
-# ---- Keystroke injection (global) ----
+# Keystroke injection (global)
 from pynput.keyboard import Controller, Key
 
 APP_NAME = "zpttlink"
-DEFAULT_KEY = "f9"
+DEFAULT_KEY = "F9"
 DEFAULT_LOGFILE = "zpttlink.log"
+DEFAULT_CONFIG_FILE = "config.json"
 
 stop_event = threading.Event()
 keyboard = None
 logger = None
 
+# Map common hotkey names to pynput Key values
 KEYMAP = {
     "f1": Key.f1, "f2": Key.f2, "f3": Key.f3, "f4": Key.f4, "f5": Key.f5,
     "f6": Key.f6, "f7": Key.f7, "f8": Key.f8, "f9": Key.f9, "f10": Key.f10,
     "f11": Key.f11, "f12": Key.f12,
-    # add more if you like
+    "esc": Key.esc, "escape": Key.esc,
+    "space": Key.space,
+    "enter": Key.enter, "return": Key.enter,
+    "tab": Key.tab,
+    "shift": Key.shift, "ctrl": Key.ctrl, "alt": Key.alt, "cmd": Key.cmd, "win": Key.cmd,
 }
+
+def parse_hotkey(name: str):
+    """
+    Accepts things like 'F8', 'f9', 'ENTER', or single characters like 'x'.
+    Returns a pynput Key or a string character usable by keyboard.press().
+    """
+    if not name:
+        return Key.f9
+    s = name.strip().lower()
+    if s in KEYMAP:
+        return KEYMAP[s]
+    # F1..F24 pattern
+    if s.startswith("f") and s[1:].isdigit():
+        return KEYMAP.get(s, Key.f9)
+    # Single character fallback
+    if len(s) == 1:
+        return s
+    # Default
+    return Key.f9
 
 # ------------------- Logging -------------------
 def setup_logging(level="INFO", logfile=DEFAULT_LOGFILE):
@@ -57,65 +67,68 @@ def setup_logging(level="INFO", logfile=DEFAULT_LOGFILE):
     lg.setLevel(level.upper())
     fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", "%H:%M:%S")
 
+    # Console
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
     lg.addHandler(ch)
 
+    # File (best-effort)
     try:
         fh = RotatingFileHandler(logfile, maxBytes=512 * 1024, backupCount=2)
         fh.setFormatter(fmt)
         lg.addHandler(fh)
     except Exception:
-        # File logging not critical
         pass
+
     return lg
 
-# ------------------- Config -------------------
+# ------------------- Config (JSON) -------------------
 DEFAULT_CONFIG = {
-    "ptt": {
-        "key": DEFAULT_KEY,
-    },
-    "serial": {
-        "port": "",
-        "match": ["usb", "ttyacm", "ttyusb", "usbmodem", "usbserial"],  # auto-detect hints
-        "baudrate": 9600,
+    "com_port": "COM3" if platform.system() == "Windows" else "/dev/ttyUSB0",
+    "audio_input": "AIOC Microphone",
+    "audio_output": "AIOC Speaker",
+    "ptt_hotkey": DEFAULT_KEY,
+    "logging": {
+        "level": "INFO",
+        "file": DEFAULT_LOGFILE
     },
     "debounce": {
         "press_ms": 30,
-        "release_ms": 60,
+        "release_ms": 60
     },
-    "audio": {
-        "input_match":  ["AIOC", "VB-Audio", "BlackHole", "ALSA"],
-        "output_match": ["AIOC", "VB-Audio", "BlackHole", "ALSA"],
-    },
-    "logging": {
-        "level": "INFO",
-        "file": DEFAULT_LOGFILE,
-    },
+    # Hints for auto-detect if com_port is empty
+    "serial_autodetect_hints": ["usb", "ttyacm", "ttyusb", "usbmodem", "usbserial", "aioc", "cm108"],
 }
 
-def load_config(path="config.toml"):
-    cfg = DEFAULT_CONFIG.copy()
-    if os.path.isfile(path):
-        try:
-            with open(path, "rb") as f:
-                data = load_toml_bytes(f.read())
-            # shallow merge (KISS)
-            for section, values in (data or {}).items():
-                if isinstance(values, dict):
-                    cfg.setdefault(section, {})
-                    cfg[section].update(values)
-                else:
-                    cfg[section] = values
-        except Exception:
-            # Non-fatal: keep defaults
-            pass
-    return cfg
+def ensure_config_exists(path: str):
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_CONFIG, f, indent=4)
+        print(f"[INFO] Created default configuration at {path}")
+
+def load_config(path: str):
+    ensure_config_exists(path)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # shallow merge defaults to fill any missing keys
+        cfg = DEFAULT_CONFIG.copy()
+        for k, v in (data or {}).items():
+            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                merged = cfg[k].copy()
+                merged.update(v)
+                cfg[k] = merged
+            else:
+                cfg[k] = v
+        return cfg
+    except Exception as e:
+        print(f"[ERROR] Failed to read '{path}': {e}")
+        print("[ERROR] Using internal defaults.")
+        return DEFAULT_CONFIG.copy()
 
 # ------------------- Serial helpers -------------------
 def list_serial_ports():
-    ports = list(list_ports.comports())
-    return ports
+    return list(list_ports.comports())
 
 def autodetect_serial(match_substrings):
     ports = list_serial_ports()
@@ -145,46 +158,48 @@ def list_audio_devices():
         print(f"Failed to query audio devices: {e}")
 
 # ------------------- Keyboard control -------------------
-def key_down(k, dry=False):
+def press_key(hotkey, dry=False):
     if dry:
-        logger.debug(f"[DRY] key_down({k})")
+        logger.debug(f"[DRY] press {hotkey}")
         return
     try:
-        keyboard.press(KEYMAP.get(k.lower(), Key.f9))
+        keyboard.press(hotkey)
     except Exception as e:
-        logger.error(f"Keyboard control failed on key_down: {e}")
+        logger.error(f"Keyboard press failed: {e}")
         raise
 
-def key_up(k, dry=False):
+def release_key(hotkey, dry=False):
     if dry:
-        logger.debug(f"[DRY] key_up({k})")
+        logger.debug(f"[DRY] release {hotkey}")
         return
     try:
-        keyboard.release(KEYMAP.get(k.lower(), Key.f9))
+        keyboard.release(hotkey)
     except Exception as e:
-        logger.error(f"Keyboard control failed on key_up: {e}")
+        logger.error(f"Keyboard release failed: {e}")
         raise
 
-def make_handlers(key_name, dry_run=False):
+def make_handlers(hotkey, dry_run=False):
     def on_press():
         logger.info("PTT DOWN -> key down")
-        key_down(key_name, dry=dry_run)
+        press_key(hotkey, dry=dry_run)
     def on_release():
         logger.info("PTT UP   -> key up")
-        key_up(key_name, dry=dry_run)
+        release_key(hotkey, dry=dry_run)
     return on_press, on_release
 
 # ------------------- PTT loop (modem lines) -------------------
 def read_ptt_loop(ser, on_press, on_release, press_ms=30, release_ms=60):
+    """
+    Treat any asserted modem line (CTS/DSR/CD) as PTT down.
+    Debounce in both directions.
+    """
     was_down = False
     last_change = 0.0
     try:
         while not stop_event.is_set():
-            # Consider any asserted modem line as “PTT down”
             down = bool(ser.cts or ser.dsr or ser.cd)
             now = time.time() * 1000.0
             if down != was_down:
-                # apply debounce depending on direction
                 needed = press_ms if down else release_ms
                 if (now - last_change) >= needed:
                     was_down = down
@@ -195,225 +210,6 @@ def read_ptt_loop(ser, on_press, on_release, press_ms=30, release_ms=60):
                         on_release()
             time.sleep(0.005)  # 5 ms tick
     finally:
-        # Make sure we release the key if we exit while down
-        if was_down:
-            on_release()
-
-# ------------------- Signals -------------------
-def handle_stop_signal(*_):
-    logger.info("Shutting down...")
-    stop_event.set()
-
-def wayland_warning_if_needed():
-    if platform.system() == "Linux" and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
-        logger.warning(
-            "Wayland session detected. Global key injection may be blocked.\n"
-            "If PTT doesn’t work, try an X11 session or a tool like 'ydotool'."
-        )
-
-# ------------------- Optional dependency checks -------------------
-def check_optional_deps():
-    """
-    Warn clearly if platform-specific optional pieces are missing or likely misconfigured.
-    Keeps runtime KISS (no hard failure unless absolutely required).
-    """
-    osname = platform.system()
-
-    # sounddevice is useful for listing devices and confirming PortAudio backends
-    if sd is None:
-        logger.warning(
-            "Python 'sounddevice' not available; audio device listing is disabled.\n"
-            "Install with: pip install sounddevice\n"
-            "Windows/macOS: also install your virtual audio driver (VB-Cable/BlackHole).\n"
-            "Linux: ensure ALSA and PortAudio libs are present."
-        )
-    else:
-        # On Linux, gently hint about ALSA loopback if not present
-        if osname == "Linux":
-            # Heuristic check for ALSA loopback presence
-            loop_candidates = ["/dev/snd/loop0", "/proc/asound/Loopback", "/proc/asound/cards"]
-            found_loop = any(os.path.exists(p) and ("Loopback" in open(p).read() if p.endswith("cards") else True)
-                             for p in loop_candidates if os.path.exists(p))
-            if not found_loop:
-                logger.warning(
-                    "ALSA Loopback not detected. For virtual routing, enable it with:\n"
-                    "  sudo modprobe snd-aloop\n"
-                    "To load at boot, add 'snd-aloop' to /etc/modules-load.d/alsa-loopback.conf"
-                )
-
-    if osname == "Darwin":
-        # pyobjc isn’t strictly required for this KISS build, but it’s a common dependency for macOS integrations.
-        try:
-            import objc  # noqa: F401
-        except Exception:
-            logger.warning(
-                "macOS: 'pyobjc' not found. If you encounter macOS-specific integration issues, install it:\n"
-                "  pip install pyobjc"
-            )
-        logger.info(
-           
-from pynput.keyboard import Controller, Key
-
-APP_NAME = "zpttlink"
-DEFAULT_KEY = "f9"
-DEFAULT_LOGFILE = "zpttlink.log"
-
-stop_event = threading.Event()
-keyboard = None
-logger = None
-
-KEYMAP = {
-    "f1": Key.f1, "f2": Key.f2, "f3": Key.f3, "f4": Key.f4, "f5": Key.f5,
-    "f6": Key.f6, "f7": Key.f7, "f8": Key.f8, "f9": Key.f9, "f10": Key.f10,
-    "f11": Key.f11, "f12": Key.f12,
-    # add more if you like
-}
-
-# ------------------- Logging -------------------
-def setup_logging(level="INFO", logfile=DEFAULT_LOGFILE):
-    lg = logging.getLogger(APP_NAME)
-    lg.setLevel(level.upper())
-    fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", "%H:%M:%S")
-
-    ch = logging.StreamHandler()
-    ch.setFormatter(fmt)
-    lg.addHandler(ch)
-
-    try:
-        fh = RotatingFileHandler(logfile, maxBytes=512 * 1024, backupCount=2)
-        fh.setFormatter(fmt)
-        lg.addHandler(fh)
-    except Exception:
-        # File logging not critical
-        pass
-    return lg
-
-# ------------------- Config -------------------
-DEFAULT_CONFIG = {
-    "ptt": {
-        "key": DEFAULT_KEY,
-    },
-    "serial": {
-        "port": "",
-        "match": ["usb", "ttyacm", "ttyusb", "usbmodem", "usbserial"],  # auto-detect hints
-        "baudrate": 9600,
-    },
-    "debounce": {
-        "press_ms": 30,
-        "release_ms": 60,
-    },
-    "audio": {
-        "input_match":  ["AIOC", "VB-Audio", "BlackHole", "ALSA"],
-        "output_match": ["AIOC", "VB-Audio", "BlackHole", "ALSA"],
-    },
-    "logging": {
-        "level": "INFO",
-        "file": DEFAULT_LOGFILE,
-    },
-}
-
-def load_config(path="config.toml"):
-    cfg = DEFAULT_CONFIG.copy()
-    if os.path.isfile(path):
-        try:
-            with open(path, "rb") as f:
-                data = load_toml_bytes(f.read())
-            # shallow merge (KISS)
-            for section, values in (data or {}).items():
-                if isinstance(values, dict):
-                    cfg.setdefault(section, {})
-                    cfg[section].update(values)
-                else:
-                    cfg[section] = values
-        except Exception:
-            # Non-fatal: keep defaults
-            pass
-    return cfg
-
-# ------------------- Serial helpers -------------------
-def list_serial_ports():
-    ports = list(list_ports.comports())
-    return ports
-
-def autodetect_serial(match_substrings):
-    ports = list_serial_ports()
-    ranked = []
-    for p in ports:
-        score = 0
-        text = f"{p.device} {p.description} {p.hwid}".lower()
-        for s in match_substrings:
-            if s.lower() in text:
-                score += 1
-        ranked.append((score, p.device))
-    ranked.sort(reverse=True)
-    return ranked[0][1] if ranked else None
-
-# ------------------- Audio listing -------------------
-def list_audio_devices():
-    if not sd:
-        print("sounddevice not available; cannot list audio devices.")
-        return
-    try:
-        devices = sd.query_devices()
-        for i, dev in enumerate(devices):
-            name = dev.get("name")
-            host = dev.get("hostapi")
-            print(f"[{i}] {name} (hostapi={host})")
-    except Exception as e:
-        print(f"Failed to query audio devices: {e}")
-
-# ------------------- Keyboard control -------------------
-def key_down(k, dry=False):
-    if dry:
-        logger.debug(f"[DRY] key_down({k})")
-        return
-    try:
-        keyboard.press(KEYMAP.get(k.lower(), Key.f9))
-    except Exception as e:
-        logger.error(f"Keyboard control failed on key_down: {e}")
-        raise
-
-def key_up(k, dry=False):
-    if dry:
-        logger.debug(f"[DRY] key_up({k})")
-        return
-    try:
-        keyboard.release(KEYMAP.get(k.lower(), Key.f9))
-    except Exception as e:
-        logger.error(f"Keyboard control failed on key_up: {e}")
-        raise
-
-def make_handlers(key_name, dry_run=False):
-    def on_press():
-        logger.info("PTT DOWN -> key down")
-        key_down(key_name, dry=dry_run)
-    def on_release():
-        logger.info("PTT UP   -> key up")
-        key_up(key_name, dry=dry_run)
-    return on_press, on_release
-
-# ------------------- PTT loop (modem lines) -------------------
-def read_ptt_loop(ser, on_press, on_release, press_ms=30, release_ms=60):
-    was_down = False
-    last_change = 0.0
-    try:
-        while not stop_event.is_set():
-            # Consider any asserted modem line as “PTT down”
-            down = bool(ser.cts or ser.dsr or ser.cd)
-            now = time.time() * 1000.0
-            if down != was_down:
-                # apply debounce depending on direction
-                needed = press_ms if down else release_ms
-                if (now - last_change) >= needed:
-                    was_down = down
-                    last_change = now
-                    if down:
-                        on_press()
-                    else:
-                        on_release()
-            time.sleep(0.005)  # 5 ms tick
-    finally:
-        # Make sure we release the key if we exit while down
         if was_down:
             on_release()
 
@@ -431,11 +227,11 @@ def wayland_warning_if_needed():
 
 # ------------------- Main -------------------
 def main():
-    # Parse CLI args
     parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink core (KISS)")
-    parser.add_argument("--config", default="config.toml", help="Path to config TOML (default: config.toml)")
-    parser.add_argument("--key", help="Hotkey to send to Zello (e.g., F8/F9)")
-    parser.add_argument("--serial", help="Serial port (overrides auto-detect)")
+    parser.add_argument("--config", default=DEFAULT_CONFIG_FILE, help=f"Path to config JSON (default: {DEFAULT_CONFIG_FILE})")
+    parser.add_argument("--key", help="Hotkey to send to Zello (e.g., F8/F9/ENTER or a single letter)")
+    parser.add_argument("--serial", help="Serial port (overrides config/autodetect)")
+    parser.add_argument("--baud", type=int, default=9600, help="Serial baud rate (default: 9600)")
     parser.add_argument("--list-serial", action="store_true", help="List serial ports and exit")
     parser.add_argument("--list-audio", action="store_true", help="List audio devices and exit")
     parser.add_argument("--dry-run", action="store_true", help="Log PTT events but do not press keys")
@@ -445,14 +241,12 @@ def main():
     cfg = load_config(args.config)
 
     # Logging
-    log_level = args.log_level or cfg["logging"].get("level", "INFO")
-    logfile = cfg["logging"].get("file", DEFAULT_LOGFILE)
+    log_level = args.log_level or cfg.get("logging", {}).get("level", "INFO")
+    logfile = cfg.get("logging", {}).get("file", DEFAULT_LOGFILE)
     global logger
     logger = setup_logging(level=log_level, logfile=logfile)
 
     logger.info("Starting ZPTTLink core...")
-
-    # Wayland heads-up
     wayland_warning_if_needed()
 
     # Lists & exit
@@ -481,20 +275,23 @@ def main():
         )
         raise e
 
-    # Determine key
-    key_name = (args.key or cfg["ptt"].get("key") or DEFAULT_KEY).lower()
+    # Determine hotkey
+    hotkey_name = (args.key or cfg.get("ptt_hotkey") or DEFAULT_KEY)
+    hotkey_obj = parse_hotkey(hotkey_name)
+    logger.info(f"Hotkey set to: {hotkey_name}")
 
     # Serial port selection
-    serial_port = args.serial or cfg["serial"].get("port") or ""
+    serial_port = args.serial or cfg.get("com_port") or ""
     if not serial_port:
-        serial_port = autodetect_serial(cfg["serial"].get("match", []))
+        hint_list = cfg.get("serial_autodetect_hints", [])
+        serial_port = autodetect_serial(hint_list)
         if serial_port:
             logger.info(f"Auto-detected serial port: {serial_port}")
         else:
-            logger.error("No serial port specified and auto-detect found none. Use --serial or plug your device.")
+            logger.error("No serial port specified and auto-detect found none. Use --serial or set 'com_port' in config.json.")
             sys.exit(2)
 
-    baud = int(cfg["serial"].get("baudrate", 9600))
+    baud = args.baud
 
     # Open serial
     try:
@@ -505,12 +302,12 @@ def main():
 
     # Quick audio “ready” log (KISS – no routing here)
     logger.info("✅ Audio system ready")
-    logger.info(f"✅ PTT system ready (listening on {serial_port}, key={key_name.upper()}, dry_run={args.dry_run})")
+    logger.info(f"✅ PTT system ready (listening on {serial_port}, hotkey={hotkey_name}, dry_run={args.dry_run})")
 
     # Handlers & thread
-    press_ms = int(cfg["debounce"].get("press_ms", 30))
-    release_ms = int(cfg["debounce"].get("release_ms", 60))
-    on_press, on_release = make_handlers(key_name, dry_run=args.dry_run)
+    press_ms = int(cfg.get("debounce", {}).get("press_ms", 30))
+    release_ms = int(cfg.get("debounce", {}).get("release_ms", 60))
+    on_press, on_release = make_handlers(hotkey_obj, dry_run=args.dry_run)
 
     # Signals
     signal.signal(signal.SIGINT, handle_stop_signal)
@@ -522,7 +319,7 @@ def main():
     t = threading.Thread(target=read_ptt_loop, args=(ser, on_press, on_release, press_ms, release_ms), daemon=True)
     t.start()
 
-    logger.info("ZPTTLink is running successfully!")
+    logger.info("ZPTTLink is running successfully! (Ctrl+C to exit)")
 
     # Wait for stop
     try:
@@ -540,6 +337,3 @@ def main():
         except Exception:
             pass
         logger.info("ZPTTLink stopped. Goodbye.")
-
-if __name__ == "__main__":
-    main()
