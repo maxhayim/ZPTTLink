@@ -1,0 +1,19 @@
+from pathlib import Path
+
+def get_config_path():
+    # 1. Local project copy
+    local = Path("config.toml")
+    if local.exists():
+        return local
+
+    # 2. OS-specific user config
+    if Path.home().joinpath(".config/zpttlink/config.toml").exists():
+        return Path.home().joinpath(".config/zpttlink/config.toml")
+    if Path.home().joinpath("Library/Application Support/zpttlink/config.toml").exists():
+        return Path.home().joinpath("Library/Application Support/zpttlink/config.toml")
+    if Path.home().joinpath("AppData/Roaming/zpttlink/config.toml").exists():
+        return Path.home().joinpath("AppData/Roaming/zpttlink/config.toml")
+
+    raise FileNotFoundError("No config.toml found")
+
+CONFIG_FILE = get_config_path()
