@@ -6,12 +6,12 @@ numpy
 loguru
 platformdirs
 
-# macOS
+# macOS only
 pyobjc; platform_system == "Darwin"
 
-# Windows
+# Windows only
 pycaw; platform_system == "Windows"
 
-# Linux
+# Linux only (optional helpers for audio control)
 pulsectl; platform_system == "Linux"
 pyalsa; platform_system == "Linux"
