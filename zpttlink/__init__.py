@@ -1,2 +1,5 @@
-__appname__ = "zpttlink"
-__version__ = "0.2.0"
+"""
+ZPTTLink package initialization.
+"""
+
+__version__ = "0.1.1"
