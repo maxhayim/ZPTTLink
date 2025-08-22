@@ -22,7 +22,7 @@ IN THE SOFTWARE.
 
 ---
 
-Third-Party Acknowledgments:
+## Third-Party Acknowledgments
 
 ZPTTLink is an independent, open-source project that interacts with or utilizes the following third-party software and platforms:
 
