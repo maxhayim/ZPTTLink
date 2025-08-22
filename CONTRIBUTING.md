@@ -1,86 +1,61 @@
 # Contributing to ZPTTLink
 
-Thank you for your interest in contributing to ZPTTLink!  
-We welcome contributions from the community and want to make the process easy and transparent.
-
----
+Thank you for your interest in contributing to ZPTTLink! We welcome contributions from the community and want to make the process clear and straightforward.
 
 ## Ways to Contribute
 
-- Submit bug reports and feature requests through GitHub Issues
-- Improve documentation (README, comments, etc.)
-- Submit Pull Requests (PRs) to fix bugs or add features
-- Help with testing on different platforms (Windows, macOS, Linux)
-- Share ideas and feedback to improve usability
-
----
+- Report bugs or request features using [GitHub Issues](../../issues).
+- Improve documentation (README, code comments, examples).
+- Submit Pull Requests (PRs) with bug fixes, improvements, or new features.
 
 ## Code Style
 
-- Write clear, readable Python code (PEP8 preferred)
-- Add comments where necessary
-- Include docstrings for functions and classes
-- Keep it simple (KISS principle) unless complexity is required
-
----
+- Follow **PEP 8** (Python style guide) for clean, consistent code.
+- Add comments where needed for clarity.
+- Use docstrings for all functions, classes, and modules.
+- Keep things simple (KISS principle).
 
 ## Pull Request Guidelines
 
-1. Fork the repository  
-2. Create a new branch for your feature or bugfix  
+1. **Fork** the repository.
+2. Create a new branch for your feature or bugfix:  
    ```bash
-   git checkout -b feature/my-feature
+   git checkout -b feature/my-new-feature
    ```
-3. Commit changes with clear, descriptive messages  
-   ```bash
-   git commit -m "Add serial port auto-detection"
-   ```
-4. Push to your fork  
-   ```bash
-   git push origin feature/my-feature
-   ```
-5. Open a Pull Request on GitHub and describe your changes
+3. Commit changes with clear, descriptive messages.
+4. Ensure code runs and does not break existing functionality.
+5. Open a Pull Request and describe your changes.
+
+## Tests
+
+- Please test your changes locally before submitting a PR.
+- If possible, add automated tests for new features.
+
+## Community
+
+We value respectful collaboration. By contributing, you agree to follow our Code of Conduct (included below).
 
 ---
 
-## Testing
+# Contributor Covenant Code of Conduct
 
-Before submitting, please test your changes:
+## Our Pledge
 
-- Verify the program runs without errors:
-  ```bash
-  python -m zpttlink --list-serial
-  ```
-- Ensure your changes do not break existing functionality
-- Test on at least one supported OS (Windows, macOS, Linux)
+We pledge to make participation in our community a harassment-free experience for everyone.
 
----
+## Our Standards
 
-## Suggestions & Issues
+Examples of behavior that contributes to a positive environment:
+- Using welcoming and inclusive language
+- Being respectful of differing viewpoints
+- Gracefully accepting constructive criticism
 
-- Use GitHub Issues for bug reports, feature requests, or questions
-- When filing an issue, include:
-  - OS/platform (Windows/macOS/Linux)
-  - Python version
-  - Steps to reproduce the problem
-  - Expected vs. actual behavior
+Examples of unacceptable behavior:
+- Harassment, trolling, or personal attacks
+- Publishing others’ private information
 
----
+## Enforcement
 
-## Licensing Notes
+Instances of abusive behavior may be reported by contacting the project maintainer.
 
-By contributing to ZPTTLink, you agree that your contributions will be licensed under the MIT License.
-
-ZPTTLink is an independent, open-source project that interacts with or utilizes the following third-party software and platforms:
-
-- Zello is a proprietary software by Zello Inc.
-- BlueStacks is an Android emulator by BlueStacks Inc.
-- Waydroid is an Android container for Linux developed by the Waydroid Project.
-- Android is a mobile operating system developed by Google LLC.
-
----
-
-## Acknowledgments
-
-Thanks to all contributors, testers, and the open-source community that makes projects like this possible.  
-We look forward to your contributions.
+Thank you for helping make this project welcoming!
