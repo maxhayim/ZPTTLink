@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zpttlink"
+# We read the version from the package to keep it in one place
+dynamic = ["version", "readme"]
+description = "Bridge PTT cables to Zello (BlueStacks/Waydroid) with simple serial->hotkey logic."
+authors = [{ name = "Max Hayim" }]
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+
+# Core, cross-platform dependencies
+dependencies = [
+    "pyserial>=3.5",
+    "pynput>=1.7",
+    "sounddevice>=0.4",
+    "numpy>=1.24",
+    "loguru>=0.7",
+    "platformdirs>=4.0",
+]
+
+# Optional, OS-specific helpers (not required for the KISS core)
+# Users can install like: pip install "zpttlink[windows]" or "zpttlink[linux]"
+[project.optional-dependencies]
+windows = ["pycaw>=20230407; sys_platform == 'win32'"]
+macos = ["pyobjc>=9.2; sys_platform == 'darwin'"]
+linux = ["pulsectl>=23.5.2; sys_platform == 'linux'", "pyalsa>=1.2; sys_platform == 'linux'"]
+
+# PyPI metadata
+keywords = ["zello", "ptt", "hamradio", "gmrs", "audio", "serial", "bluestacks", "waydroid"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Topic :: Communications",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/maxhayim/ZPTTLink"
+Source = "https://github.com/maxhayim/ZPTTLink"
+Issues = "https://github.com/maxhayim/ZPTTLink/issues"
+
+# Expose a console command: `zpttlink`
+[project.scripts]
+zpttlink = "zpttlink.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+# Include package data (if you add non-Python assets later)
+[tool.setuptools.package-data]
+zpttlink = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "zpttlink.__version__" }
+readme = { file = ["README.md"], content-type = "text/markdown" }
