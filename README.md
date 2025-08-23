@@ -10,6 +10,13 @@
     <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
   </a>
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform">
+  <a href="https://codecov.io/gh/maxhayim/ZPTTLink">
+    <img src="https://codecov.io/gh/maxhayim/ZPTTLink/branch/main/graph/badge.svg" alt="Coverage Status"/>
+  </a>
+</p>
+
+<p align="center">
+  Share this project: <a href="http://bit.ly/ZPTTLink">http://bit.ly/ZPTTLink</a>
 </p>
 
 <h1>ZPTTLink</h1>
