@@ -30,3 +30,6 @@ venv/
 
 # Local config copies
 config.toml
+.DS_Store
+__pycache__/
+*.pyc

@@ -1,0 +1,17 @@
+# Core
+pyserial
+pynput
+sounddevice
+numpy
+loguru
+platformdirs
+
+# macOS
+pyobjc; platform_system == "Darwin"
+
+# Windows
+pycaw; platform_system == "Windows"
+
+# Linux
+pulsectl; platform_system == "Linux"
+pyalsa; platform_system == "Linux"
