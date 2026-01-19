@@ -3,6 +3,10 @@
 </p>
 
 <p align="center">
+  <strong>A full Zello ↔ radio gateway with deterministic PTT control</strong>
+</p>
+
+<p align="center">
   <a href="https://www.python.org/">
     <img src="https://img.shields.io/badge/Python-3.8%2B-blue" alt="Python Version">
   </a>
@@ -17,6 +21,39 @@
 <p>ZPTTLink is an open-source, cross-platform application that bridges Zello (running inside <a href="https://www.bluestacks.com/">BlueStacks</a> or <a href="https://waydro.id/">Waydroid</a>) with radio gateway hardware like the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>. It enables seamless Push-to-Talk (PTT) control and audio routing, allowing users to link RF radios to Zello using only a computer.</p>
 
 <p>This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.</p>
+
+<h2>Signal Flow Overview</h2>
+
+<pre>
+          ┌──────────────┐
+          │     Zello    │
+          │ (BlueStacks /│
+          │   Waydroid)  │
+          └──────┬───────┘
+                 │
+        TX Audio  │  RX Audio
+                 │
+          ┌──────▼───────┐
+          │   ZPTTLink   │
+          │  (PC / Host) │
+          │              │
+          │  • Audio I/O │
+          │  • PTT Ctrl  │
+          └──────┬───────┘
+                 │
+        USB Audio │  USB PTT
+                 │
+          ┌──────▼───────┐
+          │     AIOC     │
+          │  (or equiv.) │
+          └──────┬───────┘
+                 │
+           RF TX / RX
+                 │
+          ┌──────▼───────┐
+          │     Radio    │
+          └──────────────┘
+</pre>
 
 <h2>Features</h2>
 
