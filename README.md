@@ -172,7 +172,11 @@ source venv/bin/activate</code></pre>
 
 <h2>License</h2>
 
-<p>MIT License</p>
+
+This project is licensed under the MIT License.
+
+See the [LICENSE](LICENSE) file for details.  
+Full license text: https://opensource.org/licenses/MIT
 
 <h2>Contributing</h2>
 
