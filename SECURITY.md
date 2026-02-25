@@ -1,6 +1,6 @@
 # Security Policy – ZPTTLink
 
-ZPTTLink bridges Zello (via BlueStacks) to radio hardware using an All-In-One Cable (AIOC) for audio and PTT control.  
+ZPTTLink bridges Zello via (BlueStacks or Waydroid) to radio hardware using an All-In-One Cable (AIOC) for audio and PTT control.  
 Because it interfaces with RF networks, local USB devices, and optionally remote systems, security must be taken seriously.
 
 ---
