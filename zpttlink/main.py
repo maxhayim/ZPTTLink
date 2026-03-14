@@ -42,6 +42,7 @@ KEYMAP = {
     "shift": Key.shift, "ctrl": Key.ctrl, "alt": Key.alt, "cmd": Key.cmd, "win": Key.cmd,
 }
 
+
 def parse_hotkey(name: str):
     """
     Accepts things like 'F8', 'f9', 'ENTER', or single characters like 'x'.
@@ -61,11 +62,15 @@ def parse_hotkey(name: str):
     # Default
     return Key.f9
 
+
 # ------------------- Logging -------------------
 def setup_logging(level="INFO", logfile=DEFAULT_LOGFILE):
     lg = logging.getLogger(APP_NAME)
     lg.setLevel(level.upper())
     fmt = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", "%H:%M:%S")
+
+    if lg.handlers:
+        lg.handlers.clear()
 
     # Console
     ch = logging.StreamHandler()
@@ -82,12 +87,15 @@ def setup_logging(level="INFO", logfile=DEFAULT_LOGFILE):
 
     return lg
 
+
 # ------------------- Config (JSON) -------------------
 DEFAULT_CONFIG = {
     "com_port": "COM3" if platform.system() == "Windows" else "/dev/ttyUSB0",
     "audio_input": "AIOC Microphone",
     "audio_output": "AIOC Speaker",
     "ptt_hotkey": DEFAULT_KEY,
+    "ptt_output": "none",
+    "disable_hotkey": False,
     "logging": {
         "level": "INFO",
         "file": DEFAULT_LOGFILE
@@ -100,11 +108,13 @@ DEFAULT_CONFIG = {
     "serial_autodetect_hints": ["usb", "ttyacm", "ttyusb", "usbmodem", "usbserial", "aioc", "cm108"],
 }
 
+
 def ensure_config_exists(path: str):
     if not os.path.exists(path):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(DEFAULT_CONFIG, f, indent=4)
         print(f"[INFO] Created default configuration at {path}")
+
 
 def load_config(path: str):
     ensure_config_exists(path)
@@ -126,9 +136,11 @@ def load_config(path: str):
         print("[ERROR] Using internal defaults.")
         return DEFAULT_CONFIG.copy()
 
+
 # ------------------- Serial helpers -------------------
 def list_serial_ports():
     return list(list_ports.comports())
+
 
 def autodetect_serial(match_substrings):
     ports = list_serial_ports()
@@ -142,6 +154,7 @@ def autodetect_serial(match_substrings):
         ranked.append((score, p.device))
     ranked.sort(reverse=True)
     return ranked[0][1] if ranked else None
+
 
 # ------------------- Audio listing -------------------
 def list_audio_devices():
@@ -157,6 +170,7 @@ def list_audio_devices():
     except Exception as e:
         print(f"Failed to query audio devices: {e}")
 
+
 # ------------------- Keyboard control -------------------
 def press_key(hotkey, dry=False):
     if dry:
@@ -168,6 +182,7 @@ def press_key(hotkey, dry=False):
         logger.error(f"Keyboard press failed: {e}")
         raise
 
+
 def release_key(hotkey, dry=False):
     if dry:
         logger.debug(f"[DRY] release {hotkey}")
@@ -178,14 +193,47 @@ def release_key(hotkey, dry=False):
         logger.error(f"Keyboard release failed: {e}")
         raise
 
-def make_handlers(hotkey, dry_run=False):
+
+# ------------------- Serial PTT output -------------------
+def set_serial_ptt(ser, mode: str, state: bool, dry=False):
+    mode = (mode or "none").lower()
+    if mode == "none":
+        return
+    if dry:
+        logger.debug(f"[DRY] set {mode.upper()}={state}")
+        return
+    try:
+        if mode == "dtr":
+            ser.dtr = state
+        elif mode == "rts":
+            ser.rts = state
+        else:
+            logger.warning(f"Unknown ptt_output mode '{mode}', expected: none, dtr, rts")
+            return
+        logger.info(f"Serial PTT {mode.upper()} -> {'ON' if state else 'OFF'}")
+    except Exception as e:
+        logger.error(f"Failed to set serial PTT using {mode.upper()}: {e}")
+
+
+def make_handlers(hotkey, ser, hotkey_enabled=True, ptt_output="none", dry_run=False):
     def on_press():
-        logger.info("PTT DOWN -> key down")
-        press_key(hotkey, dry=dry_run)
+        logger.info("PTT DOWN")
+        if hotkey_enabled:
+            logger.info("PTT DOWN -> key down")
+            press_key(hotkey, dry=dry_run)
+        if ptt_output != "none":
+            set_serial_ptt(ser, ptt_output, True, dry=dry_run)
+
     def on_release():
-        logger.info("PTT UP   -> key up")
-        release_key(hotkey, dry=dry_run)
+        logger.info("PTT UP")
+        if hotkey_enabled:
+            logger.info("PTT UP   -> key up")
+            release_key(hotkey, dry=dry_run)
+        if ptt_output != "none":
+            set_serial_ptt(ser, ptt_output, False, dry=dry_run)
+
     return on_press, on_release
+
 
 # ------------------- PTT loop (modem lines) -------------------
 def read_ptt_loop(ser, on_press, on_release, press_ms=30, release_ms=60):
@@ -213,17 +261,38 @@ def read_ptt_loop(ser, on_press, on_release, press_ms=30, release_ms=60):
         if was_down:
             on_release()
 
+
 # ------------------- Signals -------------------
 def handle_stop_signal(*_):
     logger.info("Shutting down...")
     stop_event.set()
 
-def wayland_warning_if_needed():
-    if platform.system() == "Linux" and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+
+def log_runtime_diagnostics():
+    if platform.system() != "Linux":
+        return
+
+    session_type = os.environ.get("XDG_SESSION_TYPE", "").lower() or "unknown"
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "") or "unknown"
+    waydroid_session = bool(os.environ.get("WAYDROID_SESSION"))
+    waydroid_socket = os.path.exists("/run/waydroid-container")
+    ydotool_socket = os.path.exists("/tmp/.ydotool_socket")
+
+    logger.info(f"Runtime session: {session_type} (desktop={desktop})")
+    if waydroid_session or waydroid_socket:
+        logger.info("Waydroid detected.")
+    if ydotool_socket:
+        logger.info("ydotool socket detected.")
+    else:
+        logger.info("ydotool socket not detected.")
+
+    if session_type == "wayland":
         logger.warning(
-            "Wayland session detected. Global key injection may be blocked.\n"
-            "If PTT doesn’t work, try an X11 session or a tool like 'ydotool'."
+            "Wayland session detected. Global key injection may be blocked. "
+            "If hotkey injection does not work, use --ptt-output dtr or --ptt-output rts, "
+            "or try an X11 session / ydotool."
         )
+
 
 # ------------------- Main -------------------
 def main():
@@ -232,9 +301,12 @@ def main():
     parser.add_argument("--key", help="Hotkey to send to Zello (e.g., F8/F9/ENTER or a single letter)")
     parser.add_argument("--serial", help="Serial port (overrides config/autodetect)")
     parser.add_argument("--baud", type=int, default=9600, help="Serial baud rate (default: 9600)")
+    parser.add_argument("--ptt-output", choices=["none", "dtr", "rts"], default=None, help="Serial PTT output method")
+    parser.add_argument("--no-hotkey", action="store_true", help="Disable keyboard injection entirely")
+    parser.add_argument("--test-ptt", action="store_true", help="Assert configured serial PTT for 1 second and exit")
     parser.add_argument("--list-serial", action="store_true", help="List serial ports and exit")
     parser.add_argument("--list-audio", action="store_true", help="List audio devices and exit")
-    parser.add_argument("--dry-run", action="store_true", help="Log PTT events but do not press keys")
+    parser.add_argument("--dry-run", action="store_true", help="Log PTT events but do not press keys or toggle serial lines")
     parser.add_argument("--log-level", default=None, help="Logging level (DEBUG, INFO, WARNING, ERROR)")
     args = parser.parse_args()
 
@@ -247,7 +319,7 @@ def main():
     logger = setup_logging(level=log_level, logfile=logfile)
 
     logger.info("Starting ZPTTLink core...")
-    wayland_warning_if_needed()
+    log_runtime_diagnostics()
 
     # Lists & exit
     if args.list_serial:
@@ -263,22 +335,27 @@ def main():
         list_audio_devices()
         return
 
-    # Keyboard init (with permission hints)
-    global keyboard
-    try:
-        keyboard = Controller()
-    except Exception as e:
-        logger.error(
-            "Keyboard controller failed to initialize.\n"
-            "- macOS: enable Terminal/iTerm under System Settings → Privacy & Security → Accessibility.\n"
-            "- Linux/Wayland: global key injection may be blocked; consider X11 or ydotool."
-        )
-        raise e
-
     # Determine hotkey
     hotkey_name = (args.key or cfg.get("ptt_hotkey") or DEFAULT_KEY)
     hotkey_obj = parse_hotkey(hotkey_name)
-    logger.info(f"Hotkey set to: {hotkey_name}")
+    hotkey_enabled = not (args.no_hotkey or cfg.get("disable_hotkey", False))
+
+    # Keyboard init (with permission hints)
+    global keyboard
+    if hotkey_enabled:
+        try:
+            keyboard = Controller()
+        except Exception as e:
+            logger.error(
+                "Keyboard controller failed to initialize.\n"
+                "- macOS: enable Terminal/iTerm under System Settings → Privacy & Security → Accessibility.\n"
+                "- Linux/Wayland: global key injection may be blocked; consider X11 or ydotool, "
+                "or use --no-hotkey with --ptt-output dtr/rts."
+            )
+            raise e
+        logger.info(f"Hotkey set to: {hotkey_name}")
+    else:
+        logger.info("Hotkey injection disabled.")
 
     # Serial port selection
     serial_port = args.serial or cfg.get("com_port") or ""
@@ -292,6 +369,7 @@ def main():
             sys.exit(2)
 
     baud = args.baud
+    ptt_output = (args.ptt_output or cfg.get("ptt_output") or "none").lower()
 
     # Open serial
     try:
@@ -300,14 +378,49 @@ def main():
         logger.error(f"Failed to open serial port {serial_port}: {e}")
         sys.exit(3)
 
+    # Ensure serial outputs start low
+    try:
+        ser.dtr = False
+        ser.rts = False
+    except Exception:
+        pass
+
     # Quick audio “ready” log (KISS – no routing here)
-    logger.info("✅ Audio system ready")
-    logger.info(f"✅ PTT system ready (listening on {serial_port}, hotkey={hotkey_name}, dry_run={args.dry_run})")
+    logger.info("Audio system ready")
+    logger.info(
+        f"PTT system ready (listening on {serial_port}, hotkey_enabled={hotkey_enabled}, "
+        f"ptt_output={ptt_output}, dry_run={args.dry_run})"
+    )
+
+    if args.test_ptt:
+        if ptt_output == "none":
+            logger.error("--test-ptt requires --ptt-output dtr or --ptt-output rts")
+            try:
+                ser.close()
+            except Exception:
+                pass
+            sys.exit(4)
+        logger.info("Testing serial PTT for 1 second...")
+        set_serial_ptt(ser, ptt_output, True, dry=args.dry_run)
+        time.sleep(1.0)
+        set_serial_ptt(ser, ptt_output, False, dry=args.dry_run)
+        logger.info("Serial PTT test complete.")
+        try:
+            ser.close()
+        except Exception:
+            pass
+        return
 
     # Handlers & thread
     press_ms = int(cfg.get("debounce", {}).get("press_ms", 30))
     release_ms = int(cfg.get("debounce", {}).get("release_ms", 60))
-    on_press, on_release = make_handlers(hotkey_obj, dry_run=args.dry_run)
+    on_press, on_release = make_handlers(
+        hotkey_obj,
+        ser,
+        hotkey_enabled=hotkey_enabled,
+        ptt_output=ptt_output,
+        dry_run=args.dry_run,
+    )
 
     # Signals
     signal.signal(signal.SIGINT, handle_stop_signal)
