@@ -14,4 +14,3 @@ pycaw; platform_system == "Windows"
 
 # Linux only (optional helpers for audio control)
 pulsectl; platform_system == "Linux"
-pyalsa; platform_system == "Linux"
