@@ -62,7 +62,22 @@
   <li>Detects PTT signals via USB serial</li>
   <li>Simulates keypresses or mouse events to trigger Zello’s Push-to-Talk</li>
   <li>Cross-platform support for Windows, macOS, and Linux</li>
-  <li>Minimal and simple (KISS — no GUI required)</li>
+  <li><strong>Two operating modes:</strong>
+    <ul>
+      <li>Terminal (CLI) mode for lightweight deployments and automation</li>
+      <li>Graphical user interface (GUI) for easy configuration and monitoring</li>
+    </ul>
+  </li>
+  <li>Built-in GUI features include:
+    <ul>
+      <li>Serial device auto-refresh</li>
+      <li>Audio device selector</li>
+      <li>PTT indicator light</li>
+      <li>Radio-style push-to-talk button</li>
+      <li>Runtime start/stop controls</li>
+      <li>Config editor with save button</li>
+    </ul>
+  </li>
   <li>Audio routing via <a href="https://vb-audio.com/Cable/">VB-Cable (Windows)</a>, <a href="https://existential.audio/blackhole/">BlackHole (macOS)</a>, or <a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback (Linux)</a></li>
 </ul>
 
@@ -139,12 +154,14 @@ source venv/bin/activate</code></pre>
 
 <h2>Usage</h2>
 
+<h3>Terminal (CLI) Mode</h3>
+
 <ol>
   <li>Activate your virtual environment:
     <pre><code>source venv/bin/activate</code></pre>
   </li>
 
-  <li>Run ZPTTLink:
+  <li>Run ZPTTLink in terminal mode:
     <pre><code>python -m zpttlink</code></pre>
   </li>
 
@@ -154,17 +171,33 @@ source venv/bin/activate</code></pre>
       <li><code>q</code> or <code>quit</code> — Safely exits the program</li>
     </ul>
   </li>
-
-  <li>Launch Zello inside BlueStacks or Waydroid:
-    <ul>
-      <li>Assign the same hotkey in Zello (e.g., F8 or F9)</li>
-      <li>Select the virtual audio driver as the microphone input</li>
-    </ul>
-  </li>
-
-  <li>Press the PTT button on your radio cable (e.g., AIOC).  
-  ZPTTLink will detect it, simulate a keypress, and Zello will transmit your audio.</li>
 </ol>
+
+<h3>Graphical Interface (GUI)</h3>
+
+<p>ZPTTLink also includes a cross-platform graphical interface.</p>
+
+<pre><code>python -m zpttlink --gui</code></pre>
+
+<p>The GUI provides:</p>
+
+<ul>
+  <li>Automatic detection of serial devices</li>
+  <li>Audio input/output device selection</li>
+  <li>PTT status indicator (Idle / RX / TX)</li>
+  <li>Large radio-style PTT button</li>
+  <li>Start/Stop runtime control</li>
+  <li>Configuration editor with save functionality</li>
+</ul>
+
+<p>The GUI works on:</p>
+
+<ul>
+  <li>Windows</li>
+  <li>macOS</li>
+  <li>Linux</li>
+  <li>Raspberry Pi</li>
+</ul>
 
 <h2>How It Works</h2>
 
