@@ -9,9 +9,8 @@ __pycache__/
 *.pyd
 *.egg-info/
 .eggs/
-.build/
-dist/
 build/
+dist/
 
 # Virtualenvs
 venv/
@@ -20,6 +19,7 @@ venv/
 
 # Logs & runtime
 *.log
+*.log.*
 *.tmp
 *.pid
 
@@ -28,15 +28,8 @@ venv/
 .idea/
 *.swp
 
-# Local config copies
-config.toml
-.DS_Store
-__pycache__/
-*.pyc
-.DS_Store
+# Backups
+*.bak
 
-.DS_Store
-__pycache__/
-*.pyc
-
-/config.json
+# Optional: ignore local config (ONLY if you want)
+# config.json
