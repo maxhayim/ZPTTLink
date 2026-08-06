@@ -442,10 +442,36 @@ class MainWindow(QMainWindow):
         self.btn_refresh_audio = QPushButton("Refresh Audio")
         self.btn_refresh_audio.clicked.connect(self.refresh_audio_devices)
 
-        layout.addRow("Input", self.audio_in_combo)
-        layout.addRow("Output", self.audio_out_combo)
+        layout.addRow("TX Input (Zello → radio)", self.audio_in_combo)
+        layout.addRow("TX Output (Zello → radio)", self.audio_out_combo)
+
+        self.chk_rx_enabled = QCheckBox("Enable RX (radio → Zello)")
+        has_rx_cfg = self.cfg.get("rx_audio_input_index") is not None and self.cfg.get("rx_audio_output_index") is not None
+        self.chk_rx_enabled.setChecked(bool(has_rx_cfg))
+        self.chk_rx_enabled.toggled.connect(self._on_rx_enabled_toggled)
+        layout.addRow("", self.chk_rx_enabled)
+
+        self.rx_audio_in_combo = QComboBox()
+        self.rx_audio_out_combo = QComboBox()
+        layout.addRow("RX Input (from radio)", self.rx_audio_in_combo)
+        layout.addRow("RX Output (to Zello mic)", self.rx_audio_out_combo)
+
+        self.spin_rx_vox_threshold = QDoubleSpinBox()
+        self.spin_rx_vox_threshold.setRange(0.001, 1.000)
+        self.spin_rx_vox_threshold.setDecimals(3)
+        self.spin_rx_vox_threshold.setSingleStep(0.005)
+        self.spin_rx_vox_threshold.setValue(float(self.cfg.get("rx_vox", {}).get("threshold", 0.01)))
+        layout.addRow("RX VOX Threshold", self.spin_rx_vox_threshold)
+
         layout.addRow("", self.btn_refresh_audio)
+
+        self._on_rx_enabled_toggled(self.chk_rx_enabled.isChecked())
         return group
+
+    def _on_rx_enabled_toggled(self, checked: bool):
+        self.rx_audio_in_combo.setEnabled(checked)
+        self.rx_audio_out_combo.setEnabled(checked)
+        self.spin_rx_vox_threshold.setEnabled(checked)
 
     def _build_runtime_group(self):
         group = QGroupBox("Runtime")
@@ -611,9 +637,13 @@ class MainWindow(QMainWindow):
     def refresh_audio_devices(self):
         current_in_data = self.audio_in_combo.currentData()
         current_out_data = self.audio_out_combo.currentData()
+        current_rx_in_data = self.rx_audio_in_combo.currentData()
+        current_rx_out_data = self.rx_audio_out_combo.currentData()
 
         self.audio_in_combo.clear()
         self.audio_out_combo.clear()
+        self.rx_audio_in_combo.clear()
+        self.rx_audio_out_combo.clear()
 
         try:
             devices = sd.query_devices()
@@ -637,6 +667,8 @@ class MainWindow(QMainWindow):
         for dev_index, label in entries:
             self.audio_in_combo.addItem(label, dev_index)
             self.audio_out_combo.addItem(label, dev_index)
+            self.rx_audio_in_combo.addItem(label, dev_index)
+            self.rx_audio_out_combo.addItem(label, dev_index)
 
         self._restore_audio_combo(
             self.audio_in_combo,
@@ -649,6 +681,18 @@ class MainWindow(QMainWindow):
             current_out_data,
             self.cfg.get("audio_output_index"),
             self.cfg.get("audio_output"),
+        )
+        self._restore_audio_combo(
+            self.rx_audio_in_combo,
+            current_rx_in_data,
+            self.cfg.get("rx_audio_input_index"),
+            None,
+        )
+        self._restore_audio_combo(
+            self.rx_audio_out_combo,
+            current_rx_out_data,
+            self.cfg.get("rx_audio_output_index"),
+            None,
         )
 
         self.log("Audio devices refreshed.")
@@ -694,6 +738,17 @@ class MainWindow(QMainWindow):
         payload["ignore_initial_ptt_state"] = self.chk_ignore_initial_ptt.isChecked()
         payload["injection_mode"] = self.injection_mode_combo.currentText()
         payload["adb_serial"] = self.adb_serial_edit.text().strip() or None
+
+        if self.chk_rx_enabled.isChecked():
+            payload["rx_audio_input_index"] = self.rx_audio_in_combo.currentData()
+            payload["rx_audio_output_index"] = self.rx_audio_out_combo.currentData()
+        else:
+            payload["rx_audio_input_index"] = None
+            payload["rx_audio_output_index"] = None
+
+        rx_vox_cfg = dict(self.cfg.get("rx_vox", {}))
+        rx_vox_cfg["threshold"] = self.spin_rx_vox_threshold.value()
+        payload["rx_vox"] = rx_vox_cfg
         payload["radio_type"] = self.radio_type_combo.currentText()
         payload["asterisk"] = {
             "host": self.asterisk_host_edit.text().strip() or "127.0.0.1",
@@ -776,6 +831,13 @@ class MainWindow(QMainWindow):
 
         if self.audio_out_combo.currentData() is not None:
             args.extend(["--audio-output-index", str(self.audio_out_combo.currentData())])
+
+        if self.chk_rx_enabled.isChecked():
+            if self.rx_audio_in_combo.currentData() is not None:
+                args.extend(["--rx-audio-input-index", str(self.rx_audio_in_combo.currentData())])
+            if self.rx_audio_out_combo.currentData() is not None:
+                args.extend(["--rx-audio-output-index", str(self.rx_audio_out_combo.currentData())])
+            args.extend(["--rx-vox-threshold", str(self.spin_rx_vox_threshold.value())])
 
         return args
 

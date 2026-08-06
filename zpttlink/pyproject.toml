@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "zpttlink"
 # We read the version from the package to keep it in one place
 dynamic = ["version", "readme"]
-description = "Open-source Zello <-> radio/Asterisk linking bridge: DTR/RTS/CM108 hardware PTT or Asterisk (USRP) over the network, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android"
+description = "ZPTTLink is an open-source, all-in-one linking bridge. Deterministic DTR/RTS/CM108 hardware PTT or a network Asterisk (USRP) backend, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android."
 authors = [{ name = "Max Hayim" }]
 license = { file = "LICENSE" }
 requires-python = ">=3.8"
