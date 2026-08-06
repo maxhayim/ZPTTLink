@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "zpttlink"
 # We read the version from the package to keep it in one place
 dynamic = ["version", "readme"]
-description = "Bridge PTT cables to Zello (BlueStacks/Waydroid) with simple serial->hotkey logic."
+description = "Zello <-> radio PTT gateway with deterministic DTR/RTS/CM108 PTT and pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android"
 authors = [{ name = "Max Hayim" }]
 license = { file = "LICENSE" }
 requires-python = ">=3.8"
@@ -31,7 +31,7 @@ macos = ["pyobjc>=9.2; sys_platform == 'darwin'"]
 linux = ["pulsectl>=23.5.2; sys_platform == 'linux'"]
 
 # PyPI metadata
-keywords = ["zello", "ptt", "hamradio", "gmrs", "audio", "serial", "bluestacks", "waydroid"]
+keywords = ["zello", "ptt", "hamradio", "gmrs", "audio", "serial", "bluestacks", "waydroid", "docker-android", "adb", "raspberry-pi"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",

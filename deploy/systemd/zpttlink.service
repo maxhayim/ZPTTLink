@@ -1,0 +1,32 @@
+
+[Unit]
+Description=ZPTTLink Zello <-> Radio PTT Gateway
+Documentation=https://github.com/maxhayim/ZPTTLink
+After=network-online.target sound.target
+Wants=network-online.target
+# If Zello runs inside Waydroid on this same box and you're using the companion
+# zpttlink-android.service to start it, uncomment these so ZPTTLink waits for it:
+#After=zpttlink-android.service
+#Wants=zpttlink-android.service
+
+[Service]
+Type=notify
+# ZPTTLink sends sd_notify(READY=1) once the audio stream is up, and a WATCHDOG=1
+# heartbeat every 10s while it stays healthy. If those heartbeats stop for
+# WatchdogSec (audio thread hung, not just crashed) systemd force-restarts it -
+# something a plain Restart=on-failure cannot catch on its own.
+WatchdogSec=30
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=20
+# Comfortably above ZPTTLink's own --serial-wait-timeout (default 30s) plus audio
+# stream startup. Raise this if you raise serial_wait_timeout in config.json.
+TimeoutStartSec=60
+
+WorkingDirectory=%h/ZPTTLink
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/ZPTTLink/venv/bin/python -m zpttlink --config %h/ZPTTLink/config.json
+
+[Install]
+WantedBy=default.target

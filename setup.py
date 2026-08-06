@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="zpttlink",
     version="2.1.0",
-    description="Bridge Zello to radio hardware using AIOC and Python",
+    description="Zello <-> radio PTT gateway with deterministic DTR/RTS/CM108 PTT and pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android",
     author="Max Hayim",
     packages=find_packages(),
     install_requires=[
