@@ -96,6 +96,42 @@ Asterisk box on the right is *also* this Pi or a separate device is your
 call (see above) — either way, setting up Asterisk itself is device-specific
 and outside ZPTTLink's scope; this tutorial covers the ZPTTLink side.
 
+**Both, on one box** (the earlier mention of running both node types from
+the same Zello — two ZPTTLink processes, two configs, one shared Android
+runtime):
+
+```
+                     Zello network
+                           │
+                 ┌─────────▼─────────┐
+                 │   Waydroid (or     │
+                 │  docker-android)   │
+                 └─────────┬──────────┘
+                Zello audio│Zello audio
+                  (shared) │ (shared)
+              ┌────────────┴────────────┐
+              ▼                         ▼
+      ┌───────────────┐         ┌───────────────┐
+      │ ZPTTLink · A  │         │ ZPTTLink · B  │
+      │ digirig/cm108 │         │   asterisk    │
+      └───────┬───────┘         └───────┬───────┘
+              │ USB serial/HID          │ UDP/USRP
+              ▼                         ▼
+      ┌───────────────┐         ┌───────────────┐
+      │  AIOC/CM108   │         │   Asterisk    │
+      │   interface   │         │ 127.0.0.1/LAN │
+      └───────┬───────┘         └───────┬───────┘
+              ▼                         ▼
+       Radio ↔ Repeater          further network
+```
+
+One Android runtime, one Zello session, two independent ZPTTLink processes
+each with their own config — `radio_type: digirig` (or `cm108`) in one,
+`radio_type: asterisk` in the other. Neither process knows the other exists;
+they just happen to share the same Zello audio source. Everything above runs
+on this one Pi except the physical radio itself and whatever the Asterisk
+side is ultimately linked to.
+
 ## 2. Hardware
 
 Shared, regardless of node type:
