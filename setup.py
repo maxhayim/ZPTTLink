@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="zpttlink",
     version="3.0.0",
-    description="ZPTTLink is an open-source, all-in-one linking bridge. Deterministic DTR/RTS/CM108 hardware PTT or a network Asterisk (USRP) backend, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android.",
+    description="ZPTTLink is an open-source, all-in-one linking bridge. Deterministic DTR/RTS/CM108 hardware PTT or a network Asterisk (USRP) backend, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android. Compatible radio interfaces include the AIOC (All-In-One Cable), CM108/CM119-based USB sound fobs, DigiRig, and other USB serial/audio radio cables.",
     author="Max Hayim",
     packages=find_packages(),
     install_requires=[
