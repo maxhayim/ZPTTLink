@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="zpttlink",
-    version="2.0.0",
+    version="2.1.0",
     description="Bridge Zello to radio hardware using AIOC and Python",
     author="Max Hayim",
     packages=find_packages(),
@@ -13,6 +13,8 @@ setup(
         "numpy",
         "loguru",
         "platformdirs",
+        "pyusb",
+        "PySide6",
         "pulsectl; platform_system == 'Linux'",
         "pycaw; platform_system == 'Windows'",
         "pyobjc; platform_system == 'Darwin'"
