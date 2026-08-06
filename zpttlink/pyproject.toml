@@ -19,6 +19,8 @@ dependencies = [
     "numpy>=1.24",
     "loguru>=0.7",
     "platformdirs>=4.0",
+    "pyusb>=1.2",
+    "PySide6>=6.5",
 ]
 
 # Optional, OS-specific helpers (not required for the KISS core)
@@ -26,7 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 windows = ["pycaw>=20230407; sys_platform == 'win32'"]
 macos = ["pyobjc>=9.2; sys_platform == 'darwin'"]
-linux = ["pulsectl>=23.5.2; sys_platform == 'linux'", "pyalsa>=1.2; sys_platform == 'linux'"]
+linux = ["pulsectl>=23.5.2; sys_platform == 'linux'"]
 
 # PyPI metadata
 keywords = ["zello", "ptt", "hamradio", "gmrs", "audio", "serial", "bluestacks", "waydroid"]

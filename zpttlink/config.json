@@ -9,7 +9,7 @@
   },
   "debounce": {
     "press_ms": 30,
-    "release_ms": 60"
+    "release_ms": 60
   },
   "serial_autodetect_hints": ["usb", "ttyacm", "ttyusb", "usbmodem", "usbserial", "aioc", "cm108"]
 }
