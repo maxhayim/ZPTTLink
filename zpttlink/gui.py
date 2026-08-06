@@ -42,7 +42,7 @@ except ImportError:
     from main import DEFAULT_CONFIG, list_audio_devices, list_serial_ports, load_config
 
 
-APP_TITLE = "ZPTTLink 2.0.0"
+APP_TITLE = "ZPTTLink 2.1.0"
 CONFIG_PATH = Path("config.json")
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
 
         self.ptt_mode_combo = QComboBox()
         self.ptt_mode_combo.addItems(["none", "dtr", "rts"])
-        self.ptt_mode_combo.setCurrentText(self.cfg.get("ptt_output", "rts"))
+        self.ptt_mode_combo.setCurrentText(self.cfg.get("ptt_output", "dtr"))
         self.ptt_mode_combo.currentTextChanged.connect(self._on_ptt_mode_changed)
         layout.addRow("PTT Output", self.ptt_mode_combo)
 
@@ -447,7 +447,14 @@ class MainWindow(QMainWindow):
 
         if system == "Linux":
             helper_ok = shutil.which("ydotool") is not None
-            self.lbl_helper.setText("ydotool: Yes" if helper_ok else "ydotool: No")
+            if session.lower() == "wayland":
+                self.lbl_helper.setText(
+                    "ydotool: Yes (used for Wayland key injection)"
+                    if helper_ok
+                    else "ydotool: No (install for Wayland key injection)"
+                )
+            else:
+                self.lbl_helper.setText("ydotool: Yes" if helper_ok else "ydotool: No")
         else:
             self.lbl_helper.setText("n/a")
 
@@ -496,6 +503,14 @@ class MainWindow(QMainWindow):
             devices = sd.query_devices()
         except Exception as e:
             self.log(f"Audio refresh failed: {e}")
+            return
+
+        if not devices:
+            self.log(
+                "No audio devices detected. On Linux/PipeWire systems, install "
+                "pipewire-pulse/pipewire-alsa (or pulseaudio), confirm 'aplay -l' lists a "
+                "device, then click Refresh Audio again."
+            )
             return
 
         entries = []

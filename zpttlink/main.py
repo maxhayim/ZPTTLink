@@ -3,7 +3,9 @@ import json
 import logging
 import os
 import platform
+import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -28,7 +30,11 @@ try:
 except Exception:
     usb = None
 
-from pynput.keyboard import Controller, Key
+try:
+    from pynput.keyboard import Controller, Key
+except Exception:
+    Controller = None
+    Key = None
 
 APP_NAME = "zpttlink"
 DEFAULT_KEY = "F9"
@@ -41,16 +47,59 @@ logger = None
 audio_stream = None
 _last_level_log = 0.0
 
-KEYMAP = {
-    "f1": Key.f1, "f2": Key.f2, "f3": Key.f3, "f4": Key.f4,
-    "f5": Key.f5, "f6": Key.f6, "f7": Key.f7, "f8": Key.f8,
-    "f9": Key.f9, "f10": Key.f10, "f11": Key.f11, "f12": Key.f12,
-    "esc": Key.esc, "escape": Key.esc,
-    "space": Key.space,
-    "enter": Key.enter, "return": Key.enter,
-    "tab": Key.tab,
-    "shift": Key.shift, "ctrl": Key.ctrl, "alt": Key.alt, "cmd": Key.cmd, "win": Key.cmd,
+if Key is not None:
+    KEYMAP = {
+        "f1": Key.f1, "f2": Key.f2, "f3": Key.f3, "f4": Key.f4,
+        "f5": Key.f5, "f6": Key.f6, "f7": Key.f7, "f8": Key.f8,
+        "f9": Key.f9, "f10": Key.f10, "f11": Key.f11, "f12": Key.f12,
+        "esc": Key.esc, "escape": Key.esc,
+        "space": Key.space,
+        "enter": Key.enter, "return": Key.enter,
+        "tab": Key.tab,
+        "shift": Key.shift, "ctrl": Key.ctrl, "alt": Key.alt, "cmd": Key.cmd, "win": Key.cmd,
+    }
+else:
+    KEYMAP = {}
+
+# Linux input-event-codes.h keycodes, for injecting via `ydotool` when pynput's
+# key injection is blocked (Wayland compositors reject synthetic global input).
+YDOTOOL_KEYCODES = {
+    "f1": 59, "f2": 60, "f3": 61, "f4": 62, "f5": 63, "f6": 64,
+    "f7": 65, "f8": 66, "f9": 67, "f10": 68, "f11": 87, "f12": 88,
+    "esc": 1, "escape": 1,
+    "space": 57,
+    "enter": 28, "return": 28,
+    "tab": 15,
+    "shift": 42, "ctrl": 29, "alt": 56, "cmd": 125, "win": 125,
+    "a": 30, "b": 48, "c": 46, "d": 32, "e": 18, "f": 33, "g": 34,
+    "h": 35, "i": 23, "j": 36, "k": 37, "l": 38, "m": 50, "n": 49,
+    "o": 24, "p": 25, "q": 16, "r": 19, "s": 31, "t": 20, "u": 22,
+    "v": 47, "w": 17, "x": 45, "y": 21, "z": 44,
+    "0": 11, "1": 2, "2": 3, "3": 4, "4": 5, "5": 6, "6": 7, "7": 8, "8": 9, "9": 10,
 }
+
+
+def ydotool_keycode(name):
+    if not name:
+        return None
+    return YDOTOOL_KEYCODES.get(str(name).strip().lower())
+
+
+def ydotool_available():
+    return shutil.which("ydotool") is not None
+
+
+def ydotool_key(code, down, dry=False):
+    action = f"{code}:{1 if down else 0}"
+    if dry:
+        logger.debug(f"[DRY] ydotool key {action}")
+        return True
+    try:
+        subprocess.run(["ydotool", "key", action], check=True, capture_output=True, timeout=2)
+        return True
+    except Exception as e:
+        logger.error(f"ydotool key injection failed: {e}")
+        return False
 
 
 def parse_hotkey(name):
@@ -220,12 +269,23 @@ def list_audio_devices():
         return
     try:
         devices = sd.query_devices()
-        for i, dev in enumerate(devices):
-            name = dev.get("name")
-            role = _audio_role_label(dev)
-            print(f"[{i}] {name} ({role})")
     except Exception as e:
         print(f"Failed to query audio devices: {e}")
+        return
+
+    if not devices:
+        print("No audio devices found.")
+        print(
+            "On Linux (e.g. Raspberry Pi OS), this usually means PortAudio can't see any "
+            "PipeWire/ALSA/Pulse devices. Try installing 'pipewire-pulse'/'pipewire-alsa' "
+            "(or 'pulseaudio'), confirm 'aplay -l' lists a device, then retry."
+        )
+        return
+
+    for i, dev in enumerate(devices):
+        name = dev.get("name")
+        role = _audio_role_label(dev)
+        print(f"[{i}] {name} ({role})")
 
 
 def press_key(hotkey, dry=False):
@@ -273,21 +333,24 @@ class RadioInterfaceBase:
 class DigiRigRadio(RadioInterfaceBase):
     name = "digirig"
 
-    def __init__(self, serial_port, baud, ptt_output="dtr", active_low=False):
+    def __init__(self, serial_port, baud, ptt_output="dtr", active_low=False, ignore_initial_state=True):
         self.serial_port = serial_port
         self.baud = baud
         self.ptt_output = (ptt_output or "dtr").lower()
         self.active_low = bool(active_low)
+        self.ignore_initial_state = bool(ignore_initial_state)
         self.ser = None
 
     def open(self):
         self.ser = serial.Serial(self.serial_port, baudrate=self.baud, timeout=0)
-        try:
-            self.ser.dtr = apply_active_low(False, self.active_low)
-            self.ser.rts = apply_active_low(False, self.active_low)
-            time.sleep(0.1)
-        except Exception:
-            pass
+        if self.ignore_initial_state:
+            try:
+                logger.info("Ignoring initial PTT state: forcing DTR/RTS off after opening serial port.")
+                self.ser.dtr = apply_active_low(False, self.active_low)
+                self.ser.rts = apply_active_low(False, self.active_low)
+                time.sleep(0.1)
+            except Exception:
+                pass
 
     def _set(self, logical_state, dry=False):
         if self.ser is None:
@@ -331,11 +394,12 @@ class DigiRigRadio(RadioInterfaceBase):
 class CM108Radio(RadioInterfaceBase):
     name = "cm108"
 
-    def __init__(self, vendor_id=0x0D8C, product_id=None, gpio_mask=0x04, active_low=False):
+    def __init__(self, vendor_id=0x0D8C, product_id=None, gpio_mask=0x04, active_low=False, ignore_initial_state=True):
         self.vendor_id = vendor_id
         self.product_id = product_id
         self.gpio_mask = int(gpio_mask) & 0xFF
         self.active_low = bool(active_low)
+        self.ignore_initial_state = bool(ignore_initial_state)
         self.dev = None
 
     def open(self):
@@ -351,6 +415,14 @@ class CM108Radio(RadioInterfaceBase):
                 + (f", product=0x{self.product_id:04x}" if self.product_id is not None else "")
                 + ")"
             )
+
+        if self.ignore_initial_state:
+            try:
+                logger.info("Ignoring initial PTT state: forcing CM108 GPIO off after opening device.")
+                self._write_gpio(False)
+                time.sleep(0.05)
+            except Exception:
+                pass
 
     def _write_gpio(self, logical_state, dry=False):
         if self.dev is None:
@@ -438,6 +510,9 @@ def choose_radio_type(cfg, args):
 
 def build_radio_backend(cfg, args):
     radio_type = choose_radio_type(cfg, args)
+    ignore_initial_state = bool(
+        getattr(args, "ignore_initial_ptt_state", False) or cfg.get("ignore_initial_ptt_state", True)
+    )
 
     if radio_type == "cm108":
         cm_cfg = cfg.get("cm108", {})
@@ -450,6 +525,7 @@ def build_radio_backend(cfg, args):
             product_id=product_id,
             gpio_mask=gpio_mask,
             active_low=active_low,
+            ignore_initial_state=ignore_initial_state,
         )
 
     if radio_type == "signalink":
@@ -484,17 +560,28 @@ def build_radio_backend(cfg, args):
         baud=baud,
         ptt_output=ptt_output,
         active_low=ptt_active_low,
+        ignore_initial_state=ignore_initial_state,
     )
 
 
 class PTTController:
-    def __init__(self, backend, hotkey=None, hotkey_enabled=False, dry_run=False):
+    def __init__(self, backend, hotkey=None, hotkey_enabled=False, dry_run=False, ydotool_code=None):
         self.backend = backend
         self.hotkey = hotkey
         self.hotkey_enabled = hotkey_enabled
         self.dry_run = dry_run
+        self.ydotool_code = ydotool_code
         self.is_down = False
         self.lock = threading.Lock()
+
+    def _inject_key(self, down):
+        if self.ydotool_code is not None:
+            ydotool_key(self.ydotool_code, down, dry=self.dry_run)
+        elif self.hotkey is not None:
+            if down:
+                press_key(self.hotkey, dry=self.dry_run)
+            else:
+                release_key(self.hotkey, dry=self.dry_run)
 
     def down(self, source="unknown"):
         with self.lock:
@@ -503,9 +590,9 @@ class PTTController:
             self.is_down = True
             logger.info(f"PTT DOWN ({source})")
 
-            if self.hotkey_enabled and self.hotkey is not None:
+            if self.hotkey_enabled:
                 logger.info("PTT DOWN -> key down")
-                press_key(self.hotkey, dry=self.dry_run)
+                self._inject_key(True)
 
             self.backend.ptt_on(dry=self.dry_run)
 
@@ -516,9 +603,9 @@ class PTTController:
             self.is_down = False
             logger.info(f"PTT UP ({source})")
 
-            if self.hotkey_enabled and self.hotkey is not None:
+            if self.hotkey_enabled:
                 logger.info("PTT UP -> key up")
-                release_key(self.hotkey, dry=self.dry_run)
+                self._inject_key(False)
 
             self.backend.ptt_off(dry=self.dry_run)
 
@@ -725,24 +812,54 @@ def main():
         return
 
     hotkey_name = args.key or cfg.get("ptt_hotkey") or DEFAULT_KEY
-    hotkey_obj = parse_hotkey(hotkey_name)
 
     force_serial_ptt = bool(args.force_serial_ptt or cfg.get("force_serial_ptt", False))
     hotkey_enabled = not (args.no_hotkey or cfg.get("disable_hotkey", False))
     if force_serial_ptt:
         hotkey_enabled = False
 
+    hotkey_obj = None
+    use_ydotool = False
+    ydotool_code = None
+
     if hotkey_enabled:
-        try:
-            keyboard = Controller()
-        except Exception as e:
-            logger.error(
-                "Keyboard controller failed to initialize.\n"
-                "- macOS: enable Terminal/iTerm under Privacy & Security -> Accessibility.\n"
-                "- Wayland: key injection may be blocked; prefer hardware PTT backends."
-            )
-            raise e
-        logger.info(f"Hotkey set to: {hotkey_name}")
+        is_wayland = platform.system() == "Linux" and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+
+        if is_wayland:
+            candidate_code = ydotool_keycode(hotkey_name)
+            if ydotool_available() and candidate_code is not None:
+                use_ydotool = True
+                ydotool_code = candidate_code
+                logger.info(
+                    f"Wayland session detected; using ydotool for key injection "
+                    f"({hotkey_name} -> keycode {ydotool_code})."
+                )
+            else:
+                logger.warning(
+                    "Wayland session detected and ydotool fallback is unavailable "
+                    "(install ydotool, run 'sudo systemctl start ydotoold', or switch to "
+                    "serial/CM108 PTT with --force-serial-ptt)."
+                )
+
+        if not use_ydotool:
+            if Controller is None:
+                logger.error(
+                    "pynput is not available for keyboard injection.\n"
+                    "Install pynput, pass --no-hotkey / --force-serial-ptt to rely on serial "
+                    "PTT only, or (on Wayland) install ydotool."
+                )
+                sys.exit(9)
+            hotkey_obj = parse_hotkey(hotkey_name)
+            try:
+                keyboard = Controller()
+            except Exception as e:
+                logger.error(
+                    "Keyboard controller failed to initialize.\n"
+                    "- macOS: enable Terminal/iTerm under Privacy & Security -> Accessibility.\n"
+                    "- Wayland: key injection may be blocked; prefer hardware PTT backends."
+                )
+                raise e
+            logger.info(f"Hotkey set to: {hotkey_name}")
     else:
         logger.info("Hotkey injection disabled.")
 
@@ -755,6 +872,7 @@ def main():
         hotkey=hotkey_obj,
         hotkey_enabled=hotkey_enabled,
         dry_run=args.dry_run,
+        ydotool_code=ydotool_code,
     )
 
     if args.test_ptt:
