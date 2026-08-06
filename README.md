@@ -125,6 +125,8 @@
 
 <h2>Installation and Setup</h2>
 
+<p><strong>Deploying to an unattended Raspberry Pi</strong> (e.g. boxed up at a repeater site)? See the dedicated <a href="docs/raspberry-pi-repeater-deployment.md">Raspberry Pi deployment tutorial</a> — hardware, headless OS setup, Waydroid + Zello, systemd autostart with a watchdog, and outdoor/unattended hardening. The steps below are the general/manual install; the Pi tutorial builds on them.</p>
+
 <ol>
   <li>Install Python:
     <ul>

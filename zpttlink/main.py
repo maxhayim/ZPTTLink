@@ -5,6 +5,7 @@ import os
 import platform
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -207,6 +208,11 @@ DEFAULT_CONFIG = {
     "injection_mode": "auto",
     "adb_serial": None,
 
+    # Seconds to wait for the radio's USB serial/HID device to enumerate before giving up.
+    # Matters on headless boot (e.g. a Pi powering on alongside its USB radio interface),
+    # where udev can lag a systemd service start by a few seconds. 0 disables waiting.
+    "serial_wait_timeout": 30,
+
     "cm108": {
         "vendor_id": 0x0D8C,
         "product_id": None,
@@ -325,6 +331,28 @@ def autodetect_serial(match_substrings):
         ranked.append((score, p.device))
     ranked.sort(reverse=True)
     return ranked[0][1] if ranked else None
+
+
+def wait_until(check_fn, timeout, poll_interval=1.0, waiting_message=None):
+    """Poll check_fn() until it returns a truthy value or timeout elapses.
+
+    On a headless boot (e.g. a Pi powering up alongside its USB radio interface),
+    the interface's udev/USB enumeration can lag the service start by a few
+    seconds. Retrying here avoids a hard failure -> full systemd restart cycle
+    for what is normally just a brief startup race.
+    """
+    deadline = time.monotonic() + timeout if timeout > 0 else time.monotonic()
+    logged = False
+    while True:
+        result = check_fn()
+        if result:
+            return result
+        if time.monotonic() >= deadline:
+            return result
+        if waiting_message and not logged:
+            logger.info(waiting_message)
+            logged = True
+        time.sleep(poll_interval)
 
 
 def _audio_role_label(dev):
@@ -590,13 +618,47 @@ def build_radio_backend(cfg, args):
     ignore_initial_state = bool(
         getattr(args, "ignore_initial_ptt_state", False) or cfg.get("ignore_initial_ptt_state", True)
     )
+    serial_wait_timeout = float(
+        args.serial_wait_timeout
+        if getattr(args, "serial_wait_timeout", None) is not None
+        else cfg.get("serial_wait_timeout", 30)
+    )
 
     if radio_type == "cm108":
+        if usb is None:
+            logger.error("pyusb not installed. Install with: pip install pyusb")
+            sys.exit(2)
+
         cm_cfg = cfg.get("cm108", {})
         vendor_id = int(cm_cfg.get("vendor_id", 0x0D8C))
         product_id = cm_cfg.get("product_id", None)
         gpio_mask = int(cm_cfg.get("gpio_mask", 0x04))
         active_low = bool(cm_cfg.get("active_low", False))
+
+        def _find_cm108():
+            kwargs = {"idVendor": vendor_id}
+            if product_id is not None:
+                kwargs["idProduct"] = product_id
+            try:
+                return usb.core.find(**kwargs) is not None
+            except Exception:
+                return False
+
+        found = wait_until(
+            _find_cm108,
+            serial_wait_timeout,
+            waiting_message=(
+                f"Waiting up to {serial_wait_timeout:.0f}s for CM108/CM119 device "
+                f"(vendor=0x{vendor_id:04x}) to enumerate..."
+            ),
+        )
+        if not found:
+            logger.error(
+                f"CM108/CM119 device not found (vendor=0x{vendor_id:04x}) after "
+                f"waiting {serial_wait_timeout:.0f}s."
+            )
+            sys.exit(2)
+
         return CM108Radio(
             vendor_id=vendor_id,
             product_id=product_id,
@@ -623,11 +685,36 @@ def build_radio_backend(cfg, args):
 
     serial_port = args.serial or cfg.get("com_port") or ""
     if not serial_port:
-        serial_port = autodetect_serial(cfg.get("serial_autodetect_hints", []))
-        if serial_port:
+        detected = wait_until(
+            lambda: autodetect_serial(cfg.get("serial_autodetect_hints", [])),
+            serial_wait_timeout,
+            waiting_message=(
+                f"No serial device detected yet; waiting up to {serial_wait_timeout:.0f}s "
+                "for one to appear..."
+            ),
+        )
+        if detected:
+            serial_port = detected
             logger.info(f"Auto-detected serial port: {serial_port}")
         else:
-            logger.error("No serial port specified and auto-detect found none.")
+            logger.error(
+                f"No serial port specified and auto-detect found none after waiting "
+                f"{serial_wait_timeout:.0f}s."
+            )
+            sys.exit(2)
+    elif serial_port.startswith(("/dev/", "/tmp/")):
+        exists = wait_until(
+            lambda: os.path.exists(serial_port),
+            serial_wait_timeout,
+            waiting_message=(
+                f"Waiting up to {serial_wait_timeout:.0f}s for serial device "
+                f"{serial_port} to appear..."
+            ),
+        )
+        if not exists:
+            logger.error(
+                f"Serial device {serial_port} did not appear within {serial_wait_timeout:.0f}s."
+            )
             sys.exit(2)
 
     baud = args.baud if args.baud is not None else int(cfg.get("baud", 9600))
@@ -826,6 +913,31 @@ def handle_stop_signal(*_):
     stop_event.set()
 
 
+def sd_notify(message):
+    """Best-effort systemd readiness/watchdog notification (sd_notify(3) protocol).
+
+    No-ops entirely when not running under systemd (NOTIFY_SOCKET unset) and adds no
+    dependency — this is a plain AF_UNIX datagram, not the `sdnotify` PyPI package.
+    Used so `Type=notify` + `WatchdogSec=` in the systemd unit can detect a *hung*
+    process (audio thread deadlocked, no watchdog pings) and restart it, which a plain
+    `Restart=on-failure` cannot: that only fires on the process actually exiting.
+    """
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            sock.connect(addr)
+            sock.sendall(message.encode())
+        finally:
+            sock.close()
+    except Exception:
+        pass
+
+
 def choose_samplerate(input_index, output_index, default_sr=48000):
     if not sd:
         return default_sr
@@ -858,6 +970,13 @@ def main():
     parser.add_argument("--config", default=DEFAULT_CONFIG_FILE)
     parser.add_argument("--key", help="Hotkey to send to Zello")
     parser.add_argument("--serial", help="Serial port override")
+    parser.add_argument(
+        "--serial-wait-timeout",
+        type=float,
+        default=None,
+        help="Seconds to wait for the radio's USB device to enumerate before giving up "
+        "(default 30; helps on headless boot where udev lags service start). 0 disables waiting.",
+    )
     parser.add_argument("--baud", type=int, default=None)
     parser.add_argument("--radio-type", choices=["auto", "cm108", "digirig", "signalink"], default=None)
     parser.add_argument("--ptt-output", choices=["none", "dtr", "rts"], default=None)
@@ -1166,11 +1285,31 @@ def main():
         f"PTT system ready (radio_backend={backend.name}, hotkey_enabled={hotkey_enabled}, dry_run={args.dry_run})"
     )
     logger.info("ZPTTLink 2.1 TX bridge is running successfully! (Ctrl+C to exit)")
+    sd_notify("READY=1")
+
+    exit_code = 0
+    watchdog_interval = 10.0
+    last_watchdog = time.monotonic()
 
     try:
         while not stop_event.is_set():
-            time.sleep(0.1)
+            time.sleep(0.5)
+
+            if audio_stream is not None and not audio_stream.active:
+                logger.error(
+                    "Audio stream is no longer active (device disconnected or errored); "
+                    "exiting so the service manager can restart."
+                )
+                exit_code = 13
+                break
+
+            now = time.monotonic()
+            if now - last_watchdog >= watchdog_interval:
+                sd_notify("WATCHDOG=1")
+                last_watchdog = now
     finally:
+        sd_notify("STOPPING=1")
+
         try:
             ptt.up(source="shutdown")
         except Exception:
@@ -1189,6 +1328,9 @@ def main():
             pass
 
         logger.info("ZPTTLink stopped. Goodbye.")
+
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
