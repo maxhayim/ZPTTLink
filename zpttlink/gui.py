@@ -42,7 +42,7 @@ except ImportError:
     from main import DEFAULT_CONFIG, list_audio_devices, list_serial_ports, load_config
 
 
-APP_TITLE = "ZPTTLink 3.0.0"
+APP_TITLE = "ZPTTLink 3.1.0"
 CONFIG_PATH = Path("config.json")
 BASE_DIR = Path(__file__).resolve().parent.parent
 

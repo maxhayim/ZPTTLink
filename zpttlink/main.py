@@ -1187,7 +1187,7 @@ def maybe_log_rx_level(level, enabled):
 def main():
     global keyboard, logger, audio_stream, rx_audio_stream
 
-    parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 3.0 Zello/radio/Asterisk bridge")
+    parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 3.1 Zello/radio/Asterisk bridge")
     parser.add_argument("--config", default=DEFAULT_CONFIG_FILE)
     parser.add_argument("--key", help="Hotkey to send to Zello")
     parser.add_argument("--serial", help="Serial port override")
@@ -1685,7 +1685,7 @@ def main():
         f"PTT system ready (radio_backend={backend.name}, hotkey_enabled={hotkey_enabled}, "
         f"rx_enabled={rx_enabled and rx_audio_stream is not None}, dry_run={args.dry_run})"
     )
-    logger.info("ZPTTLink 3.0 bridge is running successfully! (Ctrl+C to exit)")
+    logger.info("ZPTTLink 3.1 bridge is running successfully! (Ctrl+C to exit)")
     sd_notify("READY=1")
 
     exit_code = 0
