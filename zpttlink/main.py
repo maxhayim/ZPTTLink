@@ -3,9 +3,11 @@ import json
 import logging
 import os
 import platform
+import queue
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -220,6 +222,15 @@ DEFAULT_CONFIG = {
         "active_low": False
     },
 
+    # radio_type: "asterisk" connects to a local or remote Asterisk instance (app_rpt)
+    # over the USRP protocol instead of a physical radio interface. No serial/USB
+    # device is used for this backend.
+    "asterisk": {
+        "host": "127.0.0.1",
+        "port": 32001,
+        "local_port": 0
+    },
+
     "logging": {
         "level": "INFO",
         "file": DEFAULT_LOGFILE
@@ -421,6 +432,9 @@ def apply_active_low(state, active_low):
 
 class RadioInterfaceBase:
     name = "base"
+    # True for backends that carry audio themselves (e.g. over a network socket),
+    # rather than through the local sd.Stream device pair like the hardware backends.
+    transports_audio = False
 
     def open(self):
         pass
@@ -583,6 +597,167 @@ class SignalinkRadio(RadioInterfaceBase):
         pass
 
 
+# USRP is the UDP audio+PTT wire format used by Asterisk's app_rpt (chan_usrp/simpleusb)
+# to let an external program act as a "radio" node without being a compiled Asterisk
+# channel driver. 32-byte header (big-endian) + 160 samples (20ms) of 16-bit signed
+# linear PCM audio at 8000 Hz, mono, when type == USRP_TYPE_VOICE.
+USRP_TYPE_VOICE = 0
+USRP_TYPE_DTMF = 1
+USRP_TYPE_TEXT = 2
+USRP_TYPE_PING = 3
+USRP_SAMPLE_RATE = 8000
+USRP_FRAME_SAMPLES = 160  # 20ms @ 8kHz
+USRP_HEADER_FMT = ">4sIIIIIII"
+USRP_HEADER_LEN = struct.calcsize(USRP_HEADER_FMT)
+
+
+def pcm16_frame(mono_float, target_len):
+    clipped = np.clip(mono_float, -1.0, 1.0)
+    ints = (clipped * 32767.0).astype("<i2")
+    if ints.size < target_len:
+        ints = np.pad(ints, (0, target_len - ints.size))
+    elif ints.size > target_len:
+        ints = ints[:target_len]
+    return ints
+
+
+def fit_frame(mono_float, target_len):
+    if mono_float.size < target_len:
+        mono_float = np.pad(mono_float, (0, target_len - mono_float.size))
+    elif mono_float.size > target_len:
+        mono_float = mono_float[:target_len]
+    return mono_float.reshape(-1, 1).astype(np.float32)
+
+
+def resample_linear(samples, src_rate, dst_rate):
+    if samples.size == 0 or src_rate == dst_rate:
+        return samples.astype(np.float32)
+    duration = samples.shape[0] / float(src_rate)
+    dst_len = int(round(duration * dst_rate))
+    if dst_len <= 0:
+        return np.zeros(0, dtype=np.float32)
+    src_idx = np.linspace(0, samples.shape[0] - 1, num=dst_len)
+    return np.interp(src_idx, np.arange(samples.shape[0]), samples).astype(np.float32)
+
+
+class AsteriskRadio(RadioInterfaceBase):
+    """Connects to a local or remote Asterisk instance (app_rpt) over the USRP
+    protocol, in place of a physical radio interface. Unlike the hardware backends,
+    this one carries audio itself over the network rather than through a local
+    sd.Stream device pair - see transports_audio."""
+
+    name = "asterisk"
+    transports_audio = True
+
+    def __init__(self, host, port, local_port=0):
+        self.host = host
+        self.port = int(port)
+        self.local_port = int(local_port or 0)
+        self.sock = None
+        self.seq = 0
+        self.seq_lock = threading.Lock()
+        self.rx_queue = queue.Queue(maxsize=50)
+        self.rx_thread = None
+        self.stop_flag = threading.Event()
+
+    def open(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(("0.0.0.0", self.local_port))
+        self.sock.settimeout(1.0)
+        self.stop_flag.clear()
+        self.rx_thread = threading.Thread(target=self._recv_loop, daemon=True)
+        self.rx_thread.start()
+        bound_port = self.sock.getsockname()[1]
+        logger.info(
+            f"Asterisk USRP backend: sending to {self.host}:{self.port}, "
+            f"listening on 0.0.0.0:{bound_port}"
+        )
+
+    def _recv_loop(self):
+        while not self.stop_flag.is_set():
+            try:
+                data, _ = self.sock.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+            if len(data) < USRP_HEADER_LEN:
+                continue
+            try:
+                eye, seq, memory, keyup, talkgroup, ptype, mpxid, reserved = struct.unpack(
+                    USRP_HEADER_FMT, data[:USRP_HEADER_LEN]
+                )
+            except struct.error:
+                continue
+            if eye != b"USRP" or ptype != USRP_TYPE_VOICE or np is None:
+                continue
+
+            payload = data[USRP_HEADER_LEN:USRP_HEADER_LEN + USRP_FRAME_SAMPLES * 2]
+            if not payload:
+                continue
+            ints = np.frombuffer(payload, dtype="<i2")
+            floats = ints.astype(np.float32) / 32768.0
+            item = (floats, bool(keyup))
+
+            try:
+                self.rx_queue.put_nowait(item)
+            except queue.Full:
+                try:
+                    self.rx_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self.rx_queue.put_nowait(item)
+                except queue.Full:
+                    pass
+
+    def recv_audio_nowait(self):
+        try:
+            return self.rx_queue.get_nowait()
+        except queue.Empty:
+            return None
+
+    def send_audio(self, pcm16_array, keyup, dry=False):
+        if dry:
+            return
+        if self.sock is None:
+            return
+        with self.seq_lock:
+            self.seq += 1
+            seq = self.seq
+        header = struct.pack(
+            USRP_HEADER_FMT, b"USRP", seq, 0, 1 if keyup else 0, 0, USRP_TYPE_VOICE, 0, 0
+        )
+        try:
+            self.sock.sendto(header + pcm16_array.tobytes(), (self.host, self.port))
+        except Exception as e:
+            logger.error(f"USRP send failed: {e}")
+
+    def ptt_on(self, dry=False):
+        # Outbound keyup is driven per-frame from audio_callback (see main()), not
+        # here - this exists so PTTController's hotkey-injection plumbing still has
+        # a backend method to call when relaying an Asterisk-side keyup into Zello.
+        if not dry:
+            logger.debug("Asterisk backend: relayed PTT DOWN (from remote keyup)")
+
+    def ptt_off(self, dry=False):
+        if not dry:
+            logger.debug("Asterisk backend: relayed PTT UP (from remote keyup)")
+
+    def close(self):
+        self.stop_flag.set()
+        try:
+            if self.sock is not None:
+                self.sock.close()
+        except Exception:
+            pass
+        self.sock = None
+        if self.rx_thread is not None:
+            self.rx_thread.join(timeout=2.0)
+            self.rx_thread = None
+
+
 def choose_radio_type(cfg, args):
     explicit = getattr(args, "radio_type", None)
     if explicit:
@@ -666,6 +841,20 @@ def build_radio_backend(cfg, args):
             active_low=active_low,
             ignore_initial_state=ignore_initial_state,
         )
+
+    if radio_type == "asterisk":
+        if np is None:
+            logger.error("numpy is required for the Asterisk USRP backend.")
+            sys.exit(2)
+        ast_cfg = cfg.get("asterisk", {})
+        host = args.asterisk_host or ast_cfg.get("host") or "127.0.0.1"
+        port = int(args.asterisk_port if args.asterisk_port is not None else ast_cfg.get("port", 32001))
+        local_port = int(
+            args.asterisk_local_port
+            if args.asterisk_local_port is not None
+            else ast_cfg.get("local_port", 0)
+        )
+        return AsteriskRadio(host=host, port=port, local_port=local_port)
 
     if radio_type == "signalink":
         return SignalinkRadio()
@@ -966,7 +1155,7 @@ def maybe_log_level(level, enabled):
 def main():
     global keyboard, logger, audio_stream
 
-    parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 2.1 TX bridge")
+    parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 3.0 Zello/radio/Asterisk bridge")
     parser.add_argument("--config", default=DEFAULT_CONFIG_FILE)
     parser.add_argument("--key", help="Hotkey to send to Zello")
     parser.add_argument("--serial", help="Serial port override")
@@ -978,8 +1167,20 @@ def main():
         "(default 30; helps on headless boot where udev lags service start). 0 disables waiting.",
     )
     parser.add_argument("--baud", type=int, default=None)
-    parser.add_argument("--radio-type", choices=["auto", "cm108", "digirig", "signalink"], default=None)
+    parser.add_argument(
+        "--radio-type",
+        choices=["auto", "cm108", "digirig", "signalink", "asterisk"],
+        default=None,
+    )
     parser.add_argument("--ptt-output", choices=["none", "dtr", "rts"], default=None)
+    parser.add_argument("--asterisk-host", default=None, help="Asterisk USRP peer host/IP")
+    parser.add_argument("--asterisk-port", type=int, default=None, help="Asterisk USRP peer port")
+    parser.add_argument(
+        "--asterisk-local-port",
+        type=int,
+        default=None,
+        help="Local UDP port to bind for the Asterisk USRP backend (0 = OS-assigned)",
+    )
     parser.add_argument("--no-hotkey", action="store_true")
     parser.add_argument("--test-ptt", action="store_true")
     parser.add_argument("--list-serial", action="store_true")
@@ -1235,12 +1436,62 @@ def main():
     samplerate = choose_samplerate(input_index, output_index, default_sr=configured_sr)
     logger.info(f"TX samplerate: {samplerate}")
 
+    usrp_local_keyed = [False]
+    usrp_remote_keyed = [False]
+
+    if backend.transports_audio:
+        logger.info(
+            f"Asterisk USRP mode: local audio keys Asterisk directly; incoming Asterisk "
+            f"keyup relays into Zello via {'hotkey injection' if hotkey_enabled else 'PTT UP/DOWN log only (hotkey injection disabled!)'}."
+        )
+        if not hotkey_enabled:
+            logger.warning(
+                "hotkey_enabled is False with radio_type=asterisk: audio arriving from "
+                "Asterisk will be written into Zello's mic input, but Zello won't be told "
+                "to transmit it unless Zello's own VOX is enabled. Set force_serial_ptt: "
+                "false and configure injection_mode to relay it properly."
+            )
+
     def audio_callback(indata, outdata, frames, time_info, status):
         if status:
             logger.warning(f"TX callback status: {status}")
 
         level = rms_level(indata)
         maybe_log_level(level, vox_log_levels)
+
+        if backend.transports_audio:
+            # Outbound: local Zello audio -> Asterisk. Local VOX (reusing `gate`)
+            # decides the outbound keyup flag; no hotkey injection needed here since
+            # Zello is already producing this audio on its own.
+            action = gate.process(level)
+            if action == "start":
+                usrp_local_keyed[0] = True
+                logger.info("USRP TX keyup -> ON (local VOX)")
+            elif action == "stop":
+                usrp_local_keyed[0] = False
+                logger.info("USRP TX keyup -> OFF (local VOX)")
+
+            mono_in = np.asarray(indata, dtype=np.float32).reshape(-1)
+            mono_8k = resample_linear(mono_in, samplerate, USRP_SAMPLE_RATE)
+            pcm16 = pcm16_frame(mono_8k, USRP_FRAME_SAMPLES)
+            backend.send_audio(pcm16, keyup=usrp_local_keyed[0], dry=args.dry_run)
+
+            # Inbound: Asterisk -> Zello mic input. The remote keyup edge drives
+            # ptt.down()/up() so hotkey injection actually relays it into Zello.
+            rx = backend.recv_audio_nowait()
+            if rx is not None:
+                rx_samples, rx_keyup = rx
+                if rx_keyup and not usrp_remote_keyed[0]:
+                    usrp_remote_keyed[0] = True
+                    ptt.down(source="asterisk-rx")
+                elif not rx_keyup and usrp_remote_keyed[0]:
+                    usrp_remote_keyed[0] = False
+                    ptt.up(source="asterisk-rx")
+                up = resample_linear(rx_samples, USRP_SAMPLE_RATE, samplerate)
+                outdata[:] = fit_frame(up, frames)
+            else:
+                zero_out(outdata)
+            return
 
         try:
             shaped = sanitize_audio(
@@ -1263,14 +1514,19 @@ def main():
         elif action == "stop":
             ptt.up(source="vox")
 
+    stream_kwargs = dict(
+        device=(input_index, output_index),
+        samplerate=samplerate,
+        channels=1,
+        dtype="float32",
+        callback=audio_callback,
+    )
+    if backend.transports_audio:
+        # Align each callback tick with one 20ms USRP frame.
+        stream_kwargs["blocksize"] = int(round(samplerate * 0.02))
+
     try:
-        audio_stream = sd.Stream(
-            device=(input_index, output_index),
-            samplerate=samplerate,
-            channels=1,
-            dtype="float32",
-            callback=audio_callback,
-        )
+        audio_stream = sd.Stream(**stream_kwargs)
         audio_stream.start()
         logger.info("TX audio stream active.")
     except Exception as e:
@@ -1284,7 +1540,7 @@ def main():
     logger.info(
         f"PTT system ready (radio_backend={backend.name}, hotkey_enabled={hotkey_enabled}, dry_run={args.dry_run})"
     )
-    logger.info("ZPTTLink 2.1 TX bridge is running successfully! (Ctrl+C to exit)")
+    logger.info("ZPTTLink 3.0 bridge is running successfully! (Ctrl+C to exit)")
     sd_notify("READY=1")
 
     exit_code = 0

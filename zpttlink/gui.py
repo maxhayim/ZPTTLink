@@ -42,7 +42,7 @@ except ImportError:
     from main import DEFAULT_CONFIG, list_audio_devices, list_serial_ports, load_config
 
 
-APP_TITLE = "ZPTTLink 2.1.0"
+APP_TITLE = "ZPTTLink 3.0.0"
 CONFIG_PATH = Path("config.json")
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -322,6 +322,12 @@ class MainWindow(QMainWindow):
         group = QGroupBox("Connection")
         layout = QFormLayout(group)
 
+        self.radio_type_combo = QComboBox()
+        self.radio_type_combo.addItems(["auto", "digirig", "cm108", "signalink", "asterisk"])
+        self.radio_type_combo.setCurrentText(self.cfg.get("radio_type", "auto"))
+        self.radio_type_combo.currentTextChanged.connect(self._on_radio_type_changed)
+        layout.addRow("Radio Backend", self.radio_type_combo)
+
         serial_row = QHBoxLayout()
         self.serial_combo = QComboBox()
         self.btn_refresh_serial = QPushButton("Refresh")
@@ -345,7 +351,34 @@ class MainWindow(QMainWindow):
         )
         layout.addRow("", self.chk_ignore_initial_ptt)
 
+        asterisk_cfg = self.cfg.get("asterisk", {})
+        self.asterisk_host_edit = QLineEdit(asterisk_cfg.get("host", "127.0.0.1"))
+        self.asterisk_host_edit.setPlaceholderText("127.0.0.1 (same box) or a remote Asterisk IP")
+        layout.addRow("Asterisk Host", self.asterisk_host_edit)
+
+        self.asterisk_port_spin = QSpinBox()
+        self.asterisk_port_spin.setRange(1, 65535)
+        self.asterisk_port_spin.setValue(int(asterisk_cfg.get("port", 32001)))
+        layout.addRow("Asterisk Port", self.asterisk_port_spin)
+
+        self.lbl_asterisk_hint = QLabel(
+            "Connects to a local or remote Asterisk instance over the network (USRP "
+            "protocol) instead of physical radio hardware. Needs hotkey_enabled + an "
+            "injection_mode so incoming audio actually relays into Zello — see README."
+        )
+        self.lbl_asterisk_hint.setWordWrap(True)
+        layout.addRow("", self.lbl_asterisk_hint)
+
+        self._on_radio_type_changed(self.radio_type_combo.currentText())
         return group
+
+    def _on_radio_type_changed(self, value: str):
+        is_asterisk = value == "asterisk"
+        for w in (self.serial_combo, self.btn_refresh_serial, self.ptt_mode_combo, self.chk_ignore_initial_ptt):
+            w.setEnabled(not is_asterisk)
+        for w in (self.asterisk_host_edit, self.asterisk_port_spin):
+            w.setEnabled(is_asterisk)
+        self.lbl_asterisk_hint.setVisible(is_asterisk)
 
     def _build_android_target_group(self):
         group = QGroupBox("Android Target (Zello host)")
@@ -661,6 +694,12 @@ class MainWindow(QMainWindow):
         payload["ignore_initial_ptt_state"] = self.chk_ignore_initial_ptt.isChecked()
         payload["injection_mode"] = self.injection_mode_combo.currentText()
         payload["adb_serial"] = self.adb_serial_edit.text().strip() or None
+        payload["radio_type"] = self.radio_type_combo.currentText()
+        payload["asterisk"] = {
+            "host": self.asterisk_host_edit.text().strip() or "127.0.0.1",
+            "port": self.asterisk_port_spin.value(),
+            "local_port": self.cfg.get("asterisk", {}).get("local_port", 0),
+        }
 
         payload["vox"] = {
             "enabled": self.chk_vox_enabled.isChecked(),
@@ -690,6 +729,13 @@ class MainWindow(QMainWindow):
 
         hotkey = self.hotkey_edit.text().strip()
         ptt_mode = self.ptt_mode_combo.currentText()
+
+        radio_type = self.radio_type_combo.currentText()
+        if radio_type and radio_type != "auto":
+            args.extend(["--radio-type", radio_type])
+        if radio_type == "asterisk":
+            args.extend(["--asterisk-host", self.asterisk_host_edit.text().strip() or "127.0.0.1"])
+            args.extend(["--asterisk-port", str(self.asterisk_port_spin.value())])
 
         if hotkey and not self.chk_no_hotkey.isChecked():
             args.extend(["--key", hotkey])
