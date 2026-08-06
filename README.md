@@ -18,9 +18,9 @@
 
 <h1>ZPTTLink</h1>
 
-<p>ZPTTLink is an open-source, all-in-one linking bridge. Deterministic DTR/RTS/CM108 hardware PTT or a network Asterisk (USRP) backend, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android.</p>
+<p>ZPTTLink is an open-source, all-in-one linking bridge. Deterministic DTR/RTS/CM108 hardware PTT or a network Asterisk (USRP) backend, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android. Compatible radio interfaces include the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>, CM108/CM119-based USB sound fobs, DigiRig, and other USB serial/audio radio cables — see <a href="#requirements">Requirements</a>.</p>
 
-<p>Compatible radio interfaces include the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>, CM108/CM119-based USB sound fobs, DigiRig, and other USB serial/audio radio cables — see <a href="#requirements">Requirements</a>. Both the radio side and the Zello side are configurable independently: pick a hardware backend or <a href="#asterisk-usrp-backend">Asterisk (USRP)</a> for the radio side, and BlueStacks/Waydroid/docker-android for where Zello runs — see <a href="#android-runtime-targets">Android Runtime Targets</a>.</p>
+<p>Both the radio side and the Zello side are configurable independently: pick a hardware backend or <a href="#asterisk-usrp-backend">Asterisk (USRP)</a> for the radio side, and BlueStacks/Waydroid/docker-android for where Zello runs — see <a href="#android-runtime-targets">Android Runtime Targets</a>.</p>
 
 <p>This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.</p>
 
