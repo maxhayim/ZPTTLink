@@ -18,7 +18,7 @@
 
 <h1>ZPTTLink</h1>
 
-<p>ZPTTLink is an open-source, cross-platform application that bridges Zello (running inside <a href="https://www.bluestacks.com/">BlueStacks</a> or <a href="https://waydro.id/">Waydroid</a>) with radio gateway hardware like the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>. It enables seamless Push-to-Talk (PTT) control and audio routing, allowing users to link RF radios to Zello using only a computer.</p>
+<p>ZPTTLink is an open-source, cross-platform application that bridges Zello with radio gateway hardware like the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>. It enables seamless Push-to-Talk (PTT) control and audio routing, allowing users to link RF radios to Zello using only a computer. Zello itself can run inside <a href="https://www.bluestacks.com/">BlueStacks</a> (macOS), <a href="https://waydro.id/">Waydroid</a> (Linux), or a dockerized Android emulator such as <a href="https://github.com/budtmo/docker-android">budtmo/docker-android</a> or <a href="https://github.com/HQarroum/docker-android">HQarroum/docker-android</a> — see <a href="#android-runtime-targets">Android Runtime Targets</a> below for how PTT reaches each one.</p>
 
 <p>This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.</p>
 
@@ -58,10 +58,18 @@
 <h2>Features</h2>
 
 <ul>
-  <li>Compatible with AIOC, CM108-based, and other USB serial/audio radio cables</li>
-  <li>Detects PTT signals via USB serial</li>
-  <li>Simulates keypresses or mouse events to trigger Zello’s Push-to-Talk</li>
-  <li>Cross-platform support for Windows, macOS, and Linux</li>
+  <li>Compatible with AIOC, CM108/CM119-based, DigiRig, and other USB serial/audio radio cables</li>
+  <li>Detects PTT signals via USB serial (DigiRig DTR/RTS) or USB HID GPIO (CM108/CM119)</li>
+  <li><strong>Multiple ways to trigger PTT in the Zello target, selectable via <code>injection_mode</code>:</strong>
+    <ul>
+      <li><code>pynput</code> — standard host keyboard injection (X11 / macOS / Windows)</li>
+      <li><code>ydotool</code> — Linux <code>/dev/uinput</code> injection; used automatically on a detected Wayland session, where host key injection is normally blocked</li>
+      <li><code>adb</code> — sends <code>input keyevent</code> directly into an Android target over ADB; the mechanism for <a href="#android-runtime-targets">docker-android targets</a>, since they have no host window to inject into at all</li>
+      <li><code>auto</code> (default) — picks pynput or ydotool automatically based on the detected session</li>
+    </ul>
+  </li>
+  <li>Direct hardware PTT via serial DTR/RTS or CM108 GPIO, independent of key injection entirely — the most reliable option when the radio, not the app, is the thing you need to key</li>
+  <li>Cross-platform support for Windows, macOS, and Linux (including Raspberry Pi)</li>
   <li><strong>Two operating modes:</strong>
     <ul>
       <li>Terminal (CLI) mode for lightweight deployments and automation</li>
@@ -76,6 +84,7 @@
       <li>Radio-style push-to-talk button</li>
       <li>Runtime start/stop controls</li>
       <li>Config editor with save button</li>
+      <li>Android target / injection mode selector, with an ADB serial field for docker-android targets</li>
     </ul>
   </li>
   <li>Audio routing via <a href="https://vb-audio.com/Cable/">VB-Cable (Windows)</a>, <a href="https://existential.audio/blackhole/">BlackHole (macOS)</a>, or <a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback (Linux)</a></li>
@@ -84,9 +93,11 @@
 <h2>Requirements</h2>
 
 <ul>
-  <li>AIOC or compatible USB PTT/audio interface</li>
+  <li>AIOC, CM108/CM119, or compatible USB PTT/audio interface</li>
   <li>Python 3.8 or newer</li>
-  <li>Zello installed inside <a href="https://www.bluestacks.com/">BlueStacks</a> or <a href="https://waydro.id/">Waydroid</a></li>
+  <li>Zello installed inside <a href="https://www.bluestacks.com/">BlueStacks</a>, <a href="https://waydro.id/">Waydroid</a>, or a <a href="#android-runtime-targets">docker-android</a> container</li>
+  <li><strong>For <code>injection_mode: adb</code> only:</strong> <a href="https://developer.android.com/tools/adb">Android platform-tools</a> (<code>adb</code>) on the host</li>
+  <li><strong>For Wayland hosts only:</strong> <a href="https://github.com/ReimuNotMoe/ydotool">ydotool</a> + a running <code>ydotoold</code>, used automatically as the key-injection fallback</li>
 </ul>
 
 <h3>Python Dependencies</h3>
@@ -97,10 +108,10 @@
 </code></pre>
 
 <ul>
-  <li><strong>Core:</strong> pyserial, pynput, sounddevice, numpy, loguru, platformdirs</li>
+  <li><strong>Core:</strong> pyserial, pynput, sounddevice, numpy, loguru, platformdirs, pyusb, PySide6</li>
   <li><strong>Windows:</strong> pycaw</li>
   <li><strong>macOS:</strong> pyobjc</li>
-  <li><strong>Linux:</strong> pulsectl, pyalsa</li>
+  <li><strong>Linux:</strong> pulsectl</li>
 </ul>
 
 <h3>Linux Notes</h3>
@@ -199,9 +210,80 @@ source venv/bin/activate</code></pre>
   <li>Raspberry Pi</li>
 </ul>
 
+<h2>Android Runtime Targets</h2>
+
+<p>Zello can run in four different places relative to ZPTTLink. Which one you're using determines how PTT actually reaches it — set <code>injection_mode</code> (and <code>adb_serial</code>, if applicable) accordingly.</p>
+
+<h3>BlueStacks (macOS)</h3>
+
+<ul>
+  <li><code>injection_mode: pynput</code> (default on macOS)</li>
+  <li>Install BlueStacks, install Zello inside it, and set Zello's PTT hotkey to match <code>ptt_hotkey</code> in your config (default <code>F9</code>)</li>
+  <li>Route audio through <a href="https://existential.audio/blackhole/">BlackHole</a>: BlueStacks' input device set to the BlackHole loopback, ZPTTLink's <code>audio_output_index</code> pointed at the same BlackHole device</li>
+  <li>macOS requires granting Accessibility permission to the terminal/app running ZPTTLink for pynput key injection to work at all (System Settings → Privacy & Security → Accessibility)</li>
+</ul>
+
+<h3>Waydroid (Linux)</h3>
+
+<ul>
+  <li>On an X11 session: <code>injection_mode: pynput</code> works the same as BlueStacks</li>
+  <li>On a Wayland session (common on modern distros): <code>injection_mode: auto</code> switches to <code>ydotool</code> automatically — install <code>ydotool</code> and run <code>ydotoold</code> as a service first</li>
+  <li><strong>Known limitation:</strong> Waydroid runs Android inside its own container with its own input stack. Even when <code>ydotool</code> successfully injects a key on the host, Waydroid does not reliably forward that synthetic event into the Android session — this is a Waydroid input-isolation limitation, not something ZPTTLink controls. If key injection doesn't reach Zello inside Waydroid, ADB is usually more reliable (Waydroid exposes an ADB target once <code>waydroid shell settings put global adb_enabled 1</code> or equivalent is configured — see Waydroid's own docs) — set <code>injection_mode: adb</code> and point <code>adb_serial</code> at it, same as the docker-android targets below</li>
+  <li>Route audio through <a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback</a> or PulseAudio's <code>module-loopback</code>, since Waydroid can be configured to use the host's PulseAudio/PipeWire server directly</li>
+</ul>
+
+<h3>docker-android (budtmo or HQarroum)</h3>
+
+<p>Both <a href="https://github.com/budtmo/docker-android">budtmo/docker-android</a> and <a href="https://github.com/HQarroum/docker-android">HQarroum/docker-android</a> run a real Android <strong>emulator</strong> inside a container, controlled over ADB (budtmo also adds a noVNC web UI). ZPTTLink talks to Zello inside either one the same way: over ADB.</p>
+
+<pre><code># budtmo/docker-android — noVNC on 6080, ADB on 5555
+docker run -d -p 6080:6080 -p 5555:5555 \
+  -e EMULATOR_DEVICE="Samsung Galaxy S10" -e WEB_VNC=true \
+  budtmo/docker-android
+
+# HQarroum/docker-android — ADB on 5555
+docker run -d -p 5555:5555 hqarroum/docker-android
+</code></pre>
+
+<ol>
+  <li>Connect and install Zello inside the emulator (once, per container):
+    <pre><code>adb connect 127.0.0.1:5555
+adb install /path/to/zello.apk</code></pre>
+  </li>
+  <li>Open Zello inside the emulator (via budtmo's noVNC at <code>http://localhost:6080</code>, or <code>scrcpy</code> against the ADB target) and set Zello's PTT hotkey mode to <strong>Toggle</strong>, not Hold — see below for why.</li>
+  <li>Configure ZPTTLink:
+    <pre><code>{
+  "injection_mode": "adb",
+  "adb_serial": "127.0.0.1:5555",
+  "ptt_hotkey": "F9"
+}</code></pre>
+    or via the CLI: <code>python -m zpttlink --injection-mode adb --adb-serial 127.0.0.1:5555</code>, or in the GUI's "Android Target" panel.
+  </li>
+</ol>
+
+<p><strong>Why Toggle, not Hold:</strong> Android's <code>adb shell input keyevent</code> dispatches a key press and release together as a single, instantaneous event — there is no way to hold a key down over ADB the way a real keyboard (or DTR/RTS) can. ZPTTLink's ADB mode sends one tap when the radio's PTT goes down, and deliberately does nothing when it goes back up. This matches Zello's <strong>Toggle</strong> hotkey mode (tap once to start transmitting, tap again to stop) but will not work correctly with Zello's <strong>Hold</strong> mode, since there's no way to release a key ZPTTLink never truly held.</p>
+
+<p><strong>Audio is not bridged for either docker-android project.</strong> Both run headless by default — HQarroum's image explicitly starts the emulator with <code>-no-audio</code>, and budtmo's does not document any audio passthrough at all. That means ZPTTLink's audio bridge (mic-in → radio-out) has nothing to connect to inside a stock container: there is no virtual sound device reachable from the host. Getting audio into the emulator requires routing PulseAudio over the network into the container yourself — for example, enabling <code>module-native-protocol-tcp</code> on the host's PulseAudio server and pointing the emulator's own <code>-audio-backend</code>/<code>EXTRA_FLAGS</code> at it (see each project's <code>EXTRA_FLAGS</code> environment variable). Exact flags depend on the emulator/QEMU version bundled in the image, so treat this as a starting point, not a copy-paste recipe — consult the specific image's own issues/docs for the audio flags it currently supports. Until that's wired up, these two targets are useful for <strong>testing the ADB PTT trigger path</strong> with Zello's Toggle mode, not for a working end-to-end audio bridge.</p>
+
 <h2>How It Works</h2>
 
-<p>ZPTTLink listens to the USB serial signal from your radio cable. When activated, it simulates a keypress or mouse event to trigger Zello in BlueStacks or Waydroid. Audio from your radio is routed using the virtual audio driver, creating a seamless RF-to-Zello link.</p>
+<p>ZPTTLink listens for a PTT signal from your radio interface — either a serial control line (DigiRig DTR/RTS) or a USB HID GPIO line (CM108/CM119). When it fires, ZPTTLink does two things in parallel:</p>
+
+<ol>
+  <li><strong>Triggers Zello's PTT</strong>, using whichever <code>injection_mode</code> the target needs: a simulated keypress (pynput on X11/macOS/Windows, ydotool on Wayland), or an ADB <code>input keyevent</code> tap for a docker-android/ADB-reachable target. See <a href="#android-runtime-targets">Android Runtime Targets</a> for which one applies to your setup.</li>
+  <li><strong>Keys the radio directly</strong> via serial DTR/RTS or CM108 GPIO, independent of whether the key injection actually reached Zello — this is the deterministic path the project name refers to.</li>
+</ol>
+
+<p>Microphone/Zello audio is routed to the radio's audio output via a virtual audio driver, creating the RF-to-Zello link.</p>
+
+<h2>Known Limitations</h2>
+
+<ul>
+  <li><strong>TX-only.</strong> ZPTTLink currently bridges audio from Zello/microphone to the radio. It does not yet route received radio audio back into Zello as a virtual microphone — that RX path is unbuilt.</li>
+  <li><strong>ADB PTT is edge-triggered, not press-and-hold.</strong> See <a href="#android-runtime-targets">Android Runtime Targets</a> — it requires Zello's hotkey mode set to Toggle, not Hold.</li>
+  <li><strong>No audio bridge into docker-android by default.</strong> Both supported docker-android images run headless with no audio passthrough out of the box; wiring that up is a manual PulseAudio-over-network step outside ZPTTLink's control.</li>
+  <li><strong>Waydroid input isolation.</strong> Synthetic key events (ydotool or otherwise) injected on the host are not guaranteed to reach an app running inside Waydroid's container; ADB is the more reliable fallback there too.</li>
+</ul>
 
 <h2>License</h2>
 
@@ -223,6 +305,9 @@ Full license text: https://opensource.org/licenses/MIT
   <li><a href="https://github.com/alsa-project/alsa-utils">ALSA Utils / Loopback (Linux)</a></li>
   <li><a href="https://github.com/bluestacks">BlueStacks</a></li>
   <li><a href="https://github.com/waydroid">Waydroid</a></li>
+  <li><a href="https://github.com/budtmo/docker-android">budtmo/docker-android</a></li>
+  <li><a href="https://github.com/HQarroum/docker-android">HQarroum/docker-android</a></li>
+  <li><a href="https://github.com/ReimuNotMoe/ydotool">ydotool</a></li>
   <li><a href="https://github.com/vb-audio-software">VB-Audio (VB-Cable)</a></li>
 </ul>
 
