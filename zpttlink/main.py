@@ -48,7 +48,9 @@ stop_event = threading.Event()
 keyboard = None
 logger = None
 audio_stream = None
+rx_audio_stream = None
 _last_level_log = 0.0
+_last_rx_level_log = 0.0
 
 if Key is not None:
     KEYMAP = {
@@ -193,6 +195,13 @@ DEFAULT_CONFIG = {
     "audio_input_index": None,
     "audio_output_index": None,
 
+    # RX audio path: the radio's received audio -> Zello's mic input. Only used by
+    # the hardware backends (DigiRig/CM108/Signalink) - the Asterisk backend is
+    # already full duplex over the network and doesn't use these. Leave both None
+    # to disable (TX-only, matching pre-3.1 behavior).
+    "rx_audio_input_index": None,
+    "rx_audio_output_index": None,
+
     "ptt_hotkey": DEFAULT_KEY,
     "ptt_output": "dtr",
     "ptt_active_low": False,
@@ -250,8 +259,21 @@ DEFAULT_CONFIG = {
         "log_levels": True
     },
 
+    # RX-side VOX: gates the radio -> Zello relay (see rx_audio_input/output_index
+    # above). The radio's receive-audio level characteristics can differ a lot from
+    # Zello's TX loopback level, so this is a separate threshold from `vox`.
+    "rx_vox": {
+        "enabled": True,
+        "threshold": 0.01,
+        "attack_ms": 20,
+        "release_ms": 150,
+        "hang_ms": 200,
+        "log_levels": True
+    },
+
     "audio": {
         "tx_gain": 0.08,
+        "rx_gain": 0.5,
         "samplerate": 48000,
         "limit": 0.90,
         "dc_block": True
@@ -1152,8 +1174,18 @@ def maybe_log_level(level, enabled):
         _last_level_log = now
 
 
+def maybe_log_rx_level(level, enabled):
+    global _last_rx_level_log
+    if not enabled:
+        return
+    now = time.monotonic()
+    if now - _last_rx_level_log >= 0.25:
+        logger.info(f"RX VOX level={level:.6f}")
+        _last_rx_level_log = now
+
+
 def main():
-    global keyboard, logger, audio_stream
+    global keyboard, logger, audio_stream, rx_audio_stream
 
     parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 3.0 Zello/radio/Asterisk bridge")
     parser.add_argument("--config", default=DEFAULT_CONFIG_FILE)
@@ -1196,6 +1228,23 @@ def main():
     parser.add_argument("--vox-attack-ms", type=int, default=None)
     parser.add_argument("--vox-release-ms", type=int, default=None)
     parser.add_argument("--vox-hang-ms", type=int, default=None)
+
+    parser.add_argument(
+        "--rx-audio-input-index",
+        type=int,
+        default=None,
+        help="RX path: device capturing the radio's received audio",
+    )
+    parser.add_argument(
+        "--rx-audio-output-index",
+        type=int,
+        default=None,
+        help="RX path: device feeding Zello's microphone input",
+    )
+    parser.add_argument("--rx-vox-threshold", type=float, default=None)
+    parser.add_argument("--rx-vox-attack-ms", type=int, default=None)
+    parser.add_argument("--rx-vox-release-ms", type=int, default=None)
+    parser.add_argument("--rx-vox-hang-ms", type=int, default=None)
 
     parser.add_argument("--ignore-initial-ptt-state", action="store_true")
     parser.add_argument("--force-serial-ptt", action="store_true")
@@ -1403,6 +1452,7 @@ def main():
 
     audio_cfg = cfg.get("audio", {})
     tx_gain = float(audio_cfg.get("tx_gain", 0.08))
+    rx_gain = float(audio_cfg.get("rx_gain", 0.5))
     configured_sr = int(audio_cfg.get("samplerate", 48000))
     limiter = float(audio_cfg.get("limit", 0.90))
     dc_block = bool(audio_cfg.get("dc_block", True))
@@ -1417,6 +1467,55 @@ def main():
     logger.info(
         f"TX gain: {tx_gain}, limiter: {limiter}, dc_block: {dc_block}"
     )
+
+    # RX audio path: radio's received audio -> Zello's mic input. Only meaningful
+    # for the hardware backends - the Asterisk backend is already full duplex over
+    # its own UDP stream and ignores these.
+    rx_input_index = args.rx_audio_input_index
+    if rx_input_index is None:
+        rx_input_index = cfg.get("rx_audio_input_index")
+
+    rx_output_index = args.rx_audio_output_index
+    if rx_output_index is None:
+        rx_output_index = cfg.get("rx_audio_output_index")
+
+    rx_enabled = (
+        not backend.transports_audio
+        and rx_input_index is not None
+        and rx_output_index is not None
+    )
+
+    rx_vox_cfg = cfg.get("rx_vox", {})
+    rx_vox_enabled = bool(rx_vox_cfg.get("enabled", True))
+    rx_vox_threshold = float(
+        args.rx_vox_threshold if args.rx_vox_threshold is not None else rx_vox_cfg.get("threshold", 0.01)
+    )
+    rx_vox_attack_ms = int(
+        args.rx_vox_attack_ms if args.rx_vox_attack_ms is not None else rx_vox_cfg.get("attack_ms", 20)
+    )
+    rx_vox_release_ms = int(
+        args.rx_vox_release_ms if args.rx_vox_release_ms is not None else rx_vox_cfg.get("release_ms", 150)
+    )
+    rx_vox_hang_ms = int(
+        args.rx_vox_hang_ms if args.rx_vox_hang_ms is not None else rx_vox_cfg.get("hang_ms", 200)
+    )
+    rx_vox_log_levels = bool(rx_vox_cfg.get("log_levels", False))
+
+    if rx_enabled:
+        logger.info(f"RX input index: {rx_input_index}")
+        logger.info(f"RX output index: {rx_output_index}")
+        logger.info(
+            "RX VOX: "
+            + ("enabled" if rx_vox_enabled else "disabled")
+            + f" threshold={rx_vox_threshold} attack={rx_vox_attack_ms}ms "
+            f"release={rx_vox_release_ms}ms hang={rx_vox_hang_ms}ms"
+        )
+        logger.info(f"RX gain: {rx_gain}")
+    elif not backend.transports_audio:
+        logger.info(
+            "RX audio disabled (set rx_audio_input_index/rx_audio_output_index in "
+            "config to relay the radio's received audio into Zello)."
+        )
 
     try:
         in_info = sd.query_devices(input_index)
@@ -1537,8 +1636,54 @@ def main():
             pass
         sys.exit(7)
 
+    if rx_enabled:
+        rx_gate = AudioGate(
+            threshold=rx_vox_threshold,
+            attack_ms=rx_vox_attack_ms,
+            release_ms=rx_vox_release_ms,
+            hang_ms=rx_vox_hang_ms,
+        )
+
+        def rx_audio_callback(indata, outdata, frames, time_info, status):
+            if status:
+                logger.warning(f"RX callback status: {status}")
+
+            level = rms_level(indata)
+            maybe_log_rx_level(level, rx_vox_log_levels)
+
+            try:
+                shaped = sanitize_audio(indata, tx_gain=rx_gain, limit=limiter, dc_block=dc_block)
+                outdata[:] = shaped
+            except Exception as e:
+                logger.error(f"RX audio shaping failed: {e}")
+                zero_out(outdata)
+
+            if not rx_vox_enabled:
+                return
+
+            action = rx_gate.process(level)
+            if action == "start":
+                ptt.down(source="radio-rx")
+            elif action == "stop":
+                ptt.up(source="radio-rx")
+
+        try:
+            rx_audio_stream = sd.Stream(
+                device=(rx_input_index, rx_output_index),
+                samplerate=samplerate,
+                channels=1,
+                dtype="float32",
+                callback=rx_audio_callback,
+            )
+            rx_audio_stream.start()
+            logger.info("RX audio stream active.")
+        except Exception as e:
+            logger.error(f"Failed to start RX stream (continuing TX-only): {e}")
+            rx_audio_stream = None
+
     logger.info(
-        f"PTT system ready (radio_backend={backend.name}, hotkey_enabled={hotkey_enabled}, dry_run={args.dry_run})"
+        f"PTT system ready (radio_backend={backend.name}, hotkey_enabled={hotkey_enabled}, "
+        f"rx_enabled={rx_enabled and rx_audio_stream is not None}, dry_run={args.dry_run})"
     )
     logger.info("ZPTTLink 3.0 bridge is running successfully! (Ctrl+C to exit)")
     sd_notify("READY=1")
@@ -1554,6 +1699,14 @@ def main():
             if audio_stream is not None and not audio_stream.active:
                 logger.error(
                     "Audio stream is no longer active (device disconnected or errored); "
+                    "exiting so the service manager can restart."
+                )
+                exit_code = 13
+                break
+
+            if rx_audio_stream is not None and not rx_audio_stream.active:
+                logger.error(
+                    "RX audio stream is no longer active (device disconnected or errored); "
                     "exiting so the service manager can restart."
                 )
                 exit_code = 13
@@ -1575,6 +1728,13 @@ def main():
             if audio_stream is not None:
                 audio_stream.stop()
                 audio_stream.close()
+        except Exception:
+            pass
+
+        try:
+            if rx_audio_stream is not None:
+                rx_audio_stream.stop()
+                rx_audio_stream.close()
         except Exception:
             pass
 

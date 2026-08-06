@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>An open-source, all-in-one Zello ↔ radio ↔ Asterisk linking bridge with deterministic PTT control</strong>
+  <strong>An open-source, all-in-one linking bridge</strong>
 </p>
 
 <p align="center">
@@ -18,7 +18,9 @@
 
 <h1>ZPTTLink</h1>
 
-<p>ZPTTLink is an open-source, cross-platform application that bridges Zello with a radio-side target of your choice: physical radio gateway hardware like the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>, <strong>or</strong> a local/remote <a href="https://www.asterisk.org/">Asterisk</a> instance over the network (no radio hardware required for that leg — see <a href="#asterisk-usrp-backend">Asterisk (USRP) Backend</a>). Both are just different <code>radio_type</code> backends; nothing about the Zello side changes. It enables seamless Push-to-Talk (PTT) control and audio routing, allowing users to link RF radios (or an Asterisk node) to Zello using only a computer. Zello itself can run inside <a href="https://www.bluestacks.com/">BlueStacks</a> (macOS), <a href="https://waydro.id/">Waydroid</a> (Linux), or a dockerized Android emulator such as <a href="https://github.com/budtmo/docker-android">budtmo/docker-android</a> or <a href="https://github.com/HQarroum/docker-android">HQarroum/docker-android</a> — see <a href="#android-runtime-targets">Android Runtime Targets</a> below for how PTT reaches each one.</p>
+<p>ZPTTLink is an open-source, all-in-one linking bridge. Deterministic DTR/RTS/CM108 hardware PTT or a network Asterisk (USRP) backend, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android.</p>
+
+<p>Compatible radio interfaces include the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>, CM108/CM119-based USB sound fobs, DigiRig, and other USB serial/audio radio cables — see <a href="#requirements">Requirements</a>. Both the radio side and the Zello side are configurable independently: pick a hardware backend or <a href="#asterisk-usrp-backend">Asterisk (USRP)</a> for the radio side, and BlueStacks/Waydroid/docker-android for where Zello runs — see <a href="#android-runtime-targets">Android Runtime Targets</a>.</p>
 
 <p>This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.</p>
 
@@ -69,6 +71,7 @@
     </ul>
   </li>
   <li>Direct hardware PTT via serial DTR/RTS or CM108 GPIO, independent of key injection entirely — the most reliable option when the radio, not the app, is the thing you need to key</li>
+  <li><strong>Full duplex audio</strong>: Zello → radio (TX) plus an optional, independent radio → Zello (<a href="#rx-audio-hardware-backends">RX</a>) path for the hardware backends, and always-duplex for the <a href="#asterisk-usrp-backend">Asterisk (USRP) backend</a>, since USRP is bidirectional by design</li>
   <li>Cross-platform support for Windows, macOS, and Linux (including Raspberry Pi)</li>
   <li><strong>Two operating modes:</strong>
     <ul>
@@ -85,6 +88,7 @@
       <li>Runtime start/stop controls</li>
       <li>Config editor with save button</li>
       <li>Android target / injection mode selector, with an ADB serial field for docker-android targets</li>
+      <li>RX audio device selectors and VOX threshold, with a one-click enable/disable toggle</li>
     </ul>
   </li>
   <li>Audio routing via <a href="https://vb-audio.com/Cable/">VB-Cable (Windows)</a>, <a href="https://existential.audio/blackhole/">BlackHole (macOS)</a>, or <a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback (Linux)</a></li>
@@ -303,6 +307,29 @@ adb install /path/to/zello.apk</code></pre>
   <li><strong>Asterisk → Zello:</strong> incoming USRP voice frames are resampled up to the device rate and written into <code>audio_output_index</code> (point this at whatever virtual audio device feeds Zello's <em>microphone</em> input — the reverse role <code>audio_output_index</code> plays for the hardware backends, where it feeds the radio's TX audio input instead). The incoming frame's <code>keyup</code> field drives <code>ptt.down()</code>/<code>ptt.up()</code>, which is what triggers the hotkey injection that makes Zello actually transmit the relayed audio.</li>
 </ul>
 
+<h2>RX Audio (Hardware Backends)</h2>
+
+<p>The DigiRig/CM108/Signalink backends now support a second, independent audio path: the radio's <em>received</em> audio relayed back into Zello. This is off by default (matching earlier versions) — set both <code>rx_audio_input_index</code> and <code>rx_audio_output_index</code> to enable it, or use the GUI's <strong>Enable RX (radio → Zello)</strong> checkbox in the Audio panel.</p>
+
+<pre><code>{
+  "rx_audio_input_index": 3,
+  "rx_audio_output_index": 4,
+  "rx_vox": {
+    "enabled": true,
+    "threshold": 0.01,
+    "attack_ms": 20,
+    "release_ms": 150,
+    "hang_ms": 200
+  },
+  "audio": {
+    "rx_gain": 0.5
+  }
+}</code></pre>
+
+<p>This runs as a second, independent audio stream alongside the existing TX one: <code>rx_audio_input_index</code> captures the radio's received audio, an RX-side VOX gate (separately tunable from the TX <code>vox</code> block — receive-audio levels are rarely close to Zello's loopback level) decides when there's real traffic, and while active the audio is written into <code>rx_audio_output_index</code> (point this at whatever virtual device feeds Zello's <em>microphone</em> input) while <code>ptt.down()</code>/<code>ptt.up()</code> fires so hotkey injection actually relays it into Zello's network — not just silently played into its mic input.</p>
+
+<p><strong>Important wiring note:</strong> triggering RX also calls the configured backend's <code>ptt_on()</code>/<code>ptt_off()</code> — the same call TX-side VOX uses to key the radio. That's correct and intentional for a proper repeater topology with <strong>separate RX and TX radios</strong> (RX radio's audio feeds <code>rx_audio_input_index</code>; the backend's DTR/RTS/GPIO line keys the separate TX radio). It is very likely <strong>wrong</strong> for a single-transceiver setup, where keying the same radio's PTT while its own RX audio is mid-relay will cut off the very audio you're trying to relay (most transceivers mute RX while transmitting). If you only have one radio, either leave RX disabled, or set <code>ptt_output: "none"</code> so the backend's PTT line is never asserted and RX only drives hotkey injection into Zello.</p>
+
 <h2>How It Works</h2>
 
 <p>ZPTTLink listens for a PTT signal from your radio interface — either a serial control line (DigiRig DTR/RTS) or a USB HID GPIO line (CM108/CM119). When it fires, ZPTTLink does two things in parallel:</p>
@@ -312,14 +339,14 @@ adb install /path/to/zello.apk</code></pre>
   <li><strong>Keys the radio directly</strong> via serial DTR/RTS or CM108 GPIO, independent of whether the key injection actually reached Zello — this is the deterministic path the project name refers to.</li>
 </ol>
 
-<p>Microphone/Zello audio is routed to the radio's audio output via a virtual audio driver, creating the RF-to-Zello link.</p>
+<p>Microphone/Zello audio is routed to the radio's audio output via a virtual audio driver, creating the Zello-to-RF link. If <a href="#rx-audio-hardware-backends">RX audio</a> is configured, the reverse leg (radio's received audio → Zello) runs as a second, independent stream, closing the loop into a full duplex bridge.</p>
 
-<p>The above describes the hardware backends (DigiRig/CM108/Signalink). The <a href="#asterisk-usrp-backend">Asterisk (USRP) backend</a> works differently — it's genuinely full duplex over the network rather than one-way to a local device; see that section for how audio actually flows in that mode.</p>
+<p>The <a href="#asterisk-usrp-backend">Asterisk (USRP) backend</a> works differently from all of the above — audio flows over the network rather than to/from local devices; see that section for how it actually works in that mode.</p>
 
 <h2>Known Limitations</h2>
 
 <ul>
-  <li><strong>TX-only for the hardware backends.</strong> With a physical radio (DigiRig/CM108/Signalink), ZPTTLink bridges audio from Zello/microphone to the radio only — it does not route received radio audio back into Zello as a virtual microphone. The <a href="#asterisk-usrp-backend">Asterisk backend</a> does not have this limitation; USRP is duplex by design.</li>
+  <li><strong>Hardware-backend RX assumes a separate RX radio if PTT output is enabled.</strong> See the wiring note in <a href="#rx-audio-hardware-backends">RX Audio</a> — on a single transceiver, keying its own PTT during RX relay will cut off the audio being relayed. Use <code>ptt_output: "none"</code> for single-radio RX.</li>
   <li><strong>ADB PTT is edge-triggered, not press-and-hold.</strong> See <a href="#android-runtime-targets">Android Runtime Targets</a> — it requires Zello's hotkey mode set to Toggle, not Hold.</li>
   <li><strong>No audio bridge into docker-android by default.</strong> Both supported docker-android images run headless with no audio passthrough out of the box; wiring that up is a manual PulseAudio-over-network step outside ZPTTLink's control.</li>
   <li><strong>Waydroid input isolation.</strong> Synthetic key events (ydotool or otherwise) injected on the host are not guaranteed to reach an app running inside Waydroid's container; ADB is the more reliable fallback there too.</li>
