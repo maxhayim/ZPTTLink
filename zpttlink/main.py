@@ -102,6 +102,73 @@ def ydotool_key(code, down, dry=False):
         return False
 
 
+# Android KeyEvent keycodes (frameworks/base/core/java/android/view/KeyEvent.java), for
+# triggering PTT inside Android-in-a-container targets (docker-android/budtmo, HQarroum's
+# docker-android, and Waydroid) over ADB, where there is no host window for pynput/ydotool
+# to inject into at all.
+ANDROID_ADB_KEYCODES = {
+    "f1": 131, "f2": 132, "f3": 133, "f4": 134, "f5": 135, "f6": 136,
+    "f7": 137, "f8": 138, "f9": 139, "f10": 140, "f11": 141, "f12": 142,
+    "esc": 111, "escape": 111,
+    "space": 62,
+    "enter": 66, "return": 66,
+    "tab": 61,
+    "shift": 59, "ctrl": 113, "alt": 57, "cmd": 117, "win": 117,
+    "a": 29, "b": 30, "c": 31, "d": 32, "e": 33, "f": 34, "g": 35,
+    "h": 36, "i": 37, "j": 38, "k": 39, "l": 40, "m": 41, "n": 42,
+    "o": 43, "p": 44, "q": 45, "r": 46, "s": 47, "t": 48, "u": 49,
+    "v": 50, "w": 51, "x": 52, "y": 53, "z": 54,
+    "0": 7, "1": 8, "2": 9, "3": 10, "4": 11, "5": 12, "6": 13, "7": 14, "8": 15, "9": 16,
+}
+
+
+def adb_keycode(name):
+    if not name:
+        return None
+    return ANDROID_ADB_KEYCODES.get(str(name).strip().lower())
+
+
+def adb_available():
+    return shutil.which("adb") is not None
+
+
+def adb_ensure_connected(serial, dry=False):
+    if not serial:
+        return False
+    if dry:
+        logger.debug(f"[DRY] adb connect {serial}")
+        return True
+    try:
+        result = subprocess.run(
+            ["adb", "connect", serial], capture_output=True, text=True, timeout=5
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        ok = "connected to" in output.lower() or "already connected" in output.lower()
+        if not ok:
+            logger.error(f"adb connect {serial} failed: {output.strip()}")
+        return ok
+    except Exception as e:
+        logger.error(f"adb connect {serial} failed: {e}")
+        return False
+
+
+def adb_key_tap(serial, code, dry=False):
+    cmd = ["adb"]
+    if serial:
+        cmd += ["-s", serial]
+    cmd += ["shell", "input", "keyevent", str(code)]
+
+    if dry:
+        logger.debug(f"[DRY] {' '.join(cmd)}")
+        return True
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=5)
+        return True
+    except Exception as e:
+        logger.error(f"adb keyevent injection failed: {e}")
+        return False
+
+
 def parse_hotkey(name):
     if not name:
         return Key.f9
@@ -129,6 +196,16 @@ DEFAULT_CONFIG = {
     "disable_hotkey": True,
     "force_serial_ptt": True,
     "ignore_initial_ptt_state": True,
+
+    # injection_mode controls how the PTT hotkey reaches the Zello target:
+    #   auto    - pynput normally; ydotool automatically on a detected Wayland session
+    #   pynput  - always use host keyboard injection (X11/macOS/Windows)
+    #   ydotool - always use ydotool (Linux uinput injection)
+    #   adb     - send an ADB `input keyevent` tap into an Android target (docker-android,
+    #             Waydroid-with-adb, or any adb-reachable emulator/device). This is
+    #             edge-triggered, not press-and-hold: set Zello's PTT hotkey to TOGGLE mode.
+    "injection_mode": "auto",
+    "adb_serial": None,
 
     "cm108": {
         "vendor_id": 0x0D8C,
@@ -565,16 +642,33 @@ def build_radio_backend(cfg, args):
 
 
 class PTTController:
-    def __init__(self, backend, hotkey=None, hotkey_enabled=False, dry_run=False, ydotool_code=None):
+    def __init__(
+        self,
+        backend,
+        hotkey=None,
+        hotkey_enabled=False,
+        dry_run=False,
+        ydotool_code=None,
+        adb_code=None,
+        adb_serial=None,
+    ):
         self.backend = backend
         self.hotkey = hotkey
         self.hotkey_enabled = hotkey_enabled
         self.dry_run = dry_run
         self.ydotool_code = ydotool_code
+        self.adb_code = adb_code
+        self.adb_serial = adb_serial
         self.is_down = False
         self.lock = threading.Lock()
 
     def _inject_key(self, down):
+        if self.adb_code is not None:
+            # ADB `input keyevent` is a discrete tap, not press-and-hold: only fire on the
+            # down edge and rely on Zello's TOGGLE hotkey mode, not HOLD.
+            if down:
+                adb_key_tap(self.adb_serial, self.adb_code, dry=self.dry_run)
+            return
         if self.ydotool_code is not None:
             ydotool_key(self.ydotool_code, down, dry=self.dry_run)
         elif self.hotkey is not None:
@@ -591,7 +685,7 @@ class PTTController:
             logger.info(f"PTT DOWN ({source})")
 
             if self.hotkey_enabled:
-                logger.info("PTT DOWN -> key down")
+                logger.info("PTT DOWN -> adb toggle tap" if self.adb_code is not None else "PTT DOWN -> key down")
                 self._inject_key(True)
 
             self.backend.ptt_on(dry=self.dry_run)
@@ -604,7 +698,8 @@ class PTTController:
             logger.info(f"PTT UP ({source})")
 
             if self.hotkey_enabled:
-                logger.info("PTT UP -> key up")
+                if self.adb_code is None:
+                    logger.info("PTT UP -> key up")
                 self._inject_key(False)
 
             self.backend.ptt_off(dry=self.dry_run)
@@ -787,6 +882,19 @@ def main():
     parser.add_argument("--ptt-active-low", action="store_true")
     parser.add_argument("--ptt-active-high", action="store_true")
 
+    parser.add_argument(
+        "--injection-mode",
+        choices=["auto", "pynput", "ydotool", "adb"],
+        default=None,
+        help="How the hotkey reaches the Zello target. 'adb' targets Android-in-a-container "
+        "(docker-android, Waydroid-with-adb) over ADB and requires --adb-serial.",
+    )
+    parser.add_argument(
+        "--adb-serial",
+        default=None,
+        help="ADB target for --injection-mode adb, e.g. 127.0.0.1:5555",
+    )
+
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -821,11 +929,57 @@ def main():
     hotkey_obj = None
     use_ydotool = False
     ydotool_code = None
+    adb_code = None
+    adb_serial_value = None
 
     if hotkey_enabled:
+        injection_mode = str(args.injection_mode or cfg.get("injection_mode") or "auto").lower()
         is_wayland = platform.system() == "Linux" and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
 
-        if is_wayland:
+        if injection_mode == "adb":
+            adb_serial_value = args.adb_serial or cfg.get("adb_serial")
+            if not adb_available():
+                logger.error(
+                    "injection_mode=adb but 'adb' was not found on PATH. "
+                    "Install Android platform-tools."
+                )
+                sys.exit(10)
+            if not adb_serial_value:
+                logger.error(
+                    "injection_mode=adb requires --adb-serial or config 'adb_serial' "
+                    "(e.g. 127.0.0.1:5555)."
+                )
+                sys.exit(10)
+            adb_code = adb_keycode(hotkey_name)
+            if adb_code is None:
+                logger.error(f"No ADB keycode mapping for hotkey '{hotkey_name}'.")
+                sys.exit(10)
+            if not adb_ensure_connected(adb_serial_value, dry=args.dry_run):
+                logger.error(
+                    f"Could not connect to ADB target {adb_serial_value}. Is the "
+                    "container/emulator running and its ADB port reachable?"
+                )
+                sys.exit(10)
+            logger.warning(
+                "ADB PTT injection is edge-triggered (a single tap), not press-and-hold. "
+                "Set Zello's PTT hotkey mode to TOGGLE (not Hold), or PTT will only ever "
+                "start and never stop."
+            )
+            logger.info(f"ADB PTT target: {adb_serial_value} ({hotkey_name} -> keycode {adb_code})")
+
+        elif injection_mode == "ydotool":
+            candidate_code = ydotool_keycode(hotkey_name)
+            if not ydotool_available() or candidate_code is None:
+                logger.error(
+                    "injection_mode=ydotool but ydotool is unavailable, or the hotkey has "
+                    "no ydotool keycode mapping."
+                )
+                sys.exit(10)
+            use_ydotool = True
+            ydotool_code = candidate_code
+            logger.info(f"Using ydotool for key injection ({hotkey_name} -> keycode {ydotool_code}).")
+
+        elif injection_mode == "auto" and is_wayland:
             candidate_code = ydotool_keycode(hotkey_name)
             if ydotool_available() and candidate_code is not None:
                 use_ydotool = True
@@ -841,12 +995,12 @@ def main():
                     "serial/CM108 PTT with --force-serial-ptt)."
                 )
 
-        if not use_ydotool:
+        if adb_code is None and not use_ydotool:
             if Controller is None:
                 logger.error(
                     "pynput is not available for keyboard injection.\n"
                     "Install pynput, pass --no-hotkey / --force-serial-ptt to rely on serial "
-                    "PTT only, or (on Wayland) install ydotool."
+                    "PTT only, or use --injection-mode ydotool/adb."
                 )
                 sys.exit(9)
             hotkey_obj = parse_hotkey(hotkey_name)
@@ -873,6 +1027,8 @@ def main():
         hotkey_enabled=hotkey_enabled,
         dry_run=args.dry_run,
         ydotool_code=ydotool_code,
+        adb_code=adb_code,
+        adb_serial=adb_serial_value,
     )
 
     if args.test_ptt:

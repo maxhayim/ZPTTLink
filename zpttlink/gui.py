@@ -82,19 +82,48 @@ def detect_waydroid_linux() -> bool:
     return shutil.which("waydroid") is not None
 
 
+def detect_docker_android() -> Optional[str]:
+    """Best-effort detection of a running docker-android container (budtmo or HQarroum
+    images), purely informational — ADB injection still requires configuring adb_serial
+    manually, since the container's mapped host:port isn't discoverable from image name alone.
+    """
+    if shutil.which("docker") is None:
+        return None
+    try:
+        out = subprocess.run(
+            ["docker", "ps", "--format", "{{.Image}}"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if out.returncode != 0:
+            return None
+        images = out.stdout.lower()
+        if "budtmo/docker-android" in images:
+            return "docker-android (budtmo)"
+        if "docker-android" in images or "hqarroum" in images:
+            return "docker-android (HQarroum)"
+    except Exception:
+        return None
+    return None
+
+
 def detect_android_runtime() -> str:
     system = platform.system()
+    found = []
 
-    if system == "Darwin":
-        return "BlueStacks" if detect_bluestacks_mac() else "none detected"
+    if system == "Darwin" and detect_bluestacks_mac():
+        found.append("BlueStacks")
+    if system == "Linux" and detect_waydroid_linux():
+        found.append("Waydroid")
 
-    if system == "Linux":
-        return "Waydroid" if detect_waydroid_linux() else "none detected"
+    docker_target = detect_docker_android()
+    if docker_target:
+        found.append(docker_target)
 
-    if system == "Windows":
-        return "none detected"
-
-    return "n/a"
+    if found:
+        return " + ".join(found)
+    return "none detected" if system in {"Darwin", "Linux", "Windows"} else "n/a"
 
 
 def detect_audio_backend() -> str:
@@ -262,6 +291,7 @@ class MainWindow(QMainWindow):
         top.addWidget(self._build_audio_group(), 0, 1)
         top.addWidget(self._build_runtime_group(), 1, 0)
         top.addWidget(self._build_status_group(), 1, 1)
+        top.addWidget(self._build_android_target_group(), 2, 0, 1, 2)
 
         controls = QHBoxLayout()
         self.btn_save = QPushButton("Save Config")
@@ -316,6 +346,59 @@ class MainWindow(QMainWindow):
         layout.addRow("", self.chk_ignore_initial_ptt)
 
         return group
+
+    def _build_android_target_group(self):
+        group = QGroupBox("Android Target (Zello host)")
+        layout = QFormLayout(group)
+
+        self.injection_mode_combo = QComboBox()
+        self.injection_mode_combo.addItems(["auto", "pynput", "ydotool", "adb"])
+        self.injection_mode_combo.setCurrentText(self.cfg.get("injection_mode", "auto"))
+        self.injection_mode_combo.currentTextChanged.connect(self._on_injection_mode_changed)
+        layout.addRow("Injection Mode", self.injection_mode_combo)
+
+        self.adb_serial_edit = QLineEdit(self.cfg.get("adb_serial") or "")
+        self.adb_serial_edit.setPlaceholderText("e.g. 127.0.0.1:5555 (docker-android / Waydroid adb)")
+        layout.addRow("ADB Serial", self.adb_serial_edit)
+
+        self.lbl_injection_hint = QLabel("")
+        self.lbl_injection_hint.setWordWrap(True)
+        layout.addRow("", self.lbl_injection_hint)
+
+        self._update_injection_hint()
+        return group
+
+    def _on_injection_mode_changed(self, _value: str):
+        self._update_injection_hint()
+
+    def _update_injection_hint(self):
+        mode = self.injection_mode_combo.currentText()
+        if mode == "adb":
+            self.adb_serial_edit.setEnabled(True)
+            self.lbl_injection_hint.setText(
+                "ADB targets Android-in-a-container (docker-android, Waydroid-with-adb) "
+                "directly, bypassing host key injection entirely. It sends a single tap per "
+                "PTT press, not press-and-hold — set Zello's PTT hotkey mode to TOGGLE, "
+                "not Hold. See README for docker-android setup."
+            )
+        elif mode == "ydotool":
+            self.adb_serial_edit.setEnabled(False)
+            self.lbl_injection_hint.setText(
+                "Forces ydotool key injection via /dev/uinput (Linux only). Useful on "
+                "Wayland where host key injection is normally blocked."
+            )
+        elif mode == "pynput":
+            self.adb_serial_edit.setEnabled(False)
+            self.lbl_injection_hint.setText(
+                "Forces standard host keyboard injection (X11/macOS/Windows). Will not "
+                "reach BlueStacks/Waydroid/docker-android reliably under Wayland."
+            )
+        else:
+            self.adb_serial_edit.setEnabled(True)
+            self.lbl_injection_hint.setText(
+                "Auto: keyboard injection normally, ydotool automatically on a detected "
+                "Wayland session. Choose 'adb' explicitly to target a Docker/emulator Android."
+            )
 
     def _build_audio_group(self):
         group = QGroupBox("Audio")
@@ -576,6 +659,8 @@ class MainWindow(QMainWindow):
         payload["dry_run"] = self.chk_dry_run.isChecked()
         payload["force_serial_ptt"] = self.chk_force_serial_ptt.isChecked()
         payload["ignore_initial_ptt_state"] = self.chk_ignore_initial_ptt.isChecked()
+        payload["injection_mode"] = self.injection_mode_combo.currentText()
+        payload["adb_serial"] = self.adb_serial_edit.text().strip() or None
 
         payload["vox"] = {
             "enabled": self.chk_vox_enabled.isChecked(),
@@ -631,6 +716,14 @@ class MainWindow(QMainWindow):
 
         if self.chk_force_serial_ptt.isChecked():
             args.append("--force-serial-ptt")
+
+        injection_mode = self.injection_mode_combo.currentText()
+        if injection_mode and injection_mode != "auto":
+            args.extend(["--injection-mode", injection_mode])
+
+        adb_serial = self.adb_serial_edit.text().strip()
+        if adb_serial:
+            args.extend(["--adb-serial", adb_serial])
 
         if self.audio_in_combo.currentData() is not None:
             args.extend(["--audio-input-index", str(self.audio_in_combo.currentData())])
