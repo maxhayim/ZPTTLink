@@ -8,45 +8,16 @@ Targets](../README.md#android-runtime-targets), [Asterisk (USRP)
 Backend](../README.md#asterisk-usrp-backend), and [Known
 Limitations](../README.md#known-limitations).
 
-Zello is always one side of the bridge — that part of the setup (Waydroid +
-Zello) is identical either way. What differs is the *other* side, and that's
-what this guide splits into two node types:
-
-- **Standard node** — Zello bridged to a physical radio (AIOC/CM108/DigiRig)
-  cabled directly to this Pi.
-- **Asterisk node** — Zello bridged to an [Asterisk](https://www.asterisk.org/)
-  instance over the network (USRP protocol), no radio hardware on this Pi
-  at all.
-
-**The Asterisk node splits into two equally valid patterns — pick based on
-what you already have, not because one is "more correct":**
-
-- **Two boxes.** If you already have a dedicated Asterisk/`app_rpt` radio
-  node running — these are often lightweight, purpose-built devices (a Pi
-  3-class board with a small RF/audio interface board, nothing more), with
-  no spare RAM/CPU to also run Waydroid + Zello — leave it exactly as it is.
-  Run ZPTTLink + Waydroid + Zello on a **separate** Pi/computer that just
-  needs LAN/VPN reachability to it, pointing `asterisk.host` at that
-  device's IP. This is the right call if you don't want to touch a node
-  that's already working, or don't want to size one box for both jobs.
-- **One box.** Plenty of people run this alone, on hardware they already
-  have, without standing up a second Pi — Asterisk and ZPTTLink (+Waydroid
-  +Zello) on the *same* Pi, `asterisk.host` set to `127.0.0.1`. This is
-  completely fine as long as the box is sized for both workloads at once
-  (Pi 4/5, 4GB+ RAM — see [Hardware](#2-hardware) below; a Pi 3-class board
-  that's fine for Asterisk alone will struggle running Waydroid too).
-
-Both patterns use the exact same ZPTTLink config and the exact same steps
-below — the only thing that changes is what `asterisk.host` points at.
-
-You can also run *both* node types from the same ZPTTLink+Zello box (two
-ZPTTLink processes, two configs) if you want Zello reachable from both a
-local radio and an Asterisk node — each `radio_type` is independent per
-config.json.
+Zello is always one side of the bridge — that part (Waydroid + Zello) is
+identical in every scenario below. What changes is the radio-side target.
+Three ways to deploy it:
 
 ## 1. What you're building
 
-**Standard node:**
+### 1. Standard node
+
+Zello bridged to a physical radio (AIOC/CM108/DigiRig) cabled directly to
+this Pi.
 
 ```
         Zello network
@@ -70,7 +41,11 @@ config.json.
                                   Radio ↔ Repeater
 ```
 
-**Asterisk node** (one box or two — see above; only `asterisk.host` changes):
+### 2. Asterisk node
+
+Zello bridged to an [Asterisk](https://www.asterisk.org/) instance over the
+network (USRP protocol) instead of a physical radio — no radio hardware on
+this Pi at all.
 
 ```
         Zello network
@@ -86,51 +61,47 @@ config.json.
                                   └─────────────┘                └──────┬──────┘
                                                                          ▼
                                                        (whatever that node is linked to)
-
-  Asterisk above is either 127.0.0.1 (same Pi) or a separate box's LAN IP —
-  same ZPTTLink config either way, see step 7B.
 ```
 
-Waydroid + Zello + ZPTTLink on the left always run on this Pi. Whether the
-Asterisk box on the right is *also* this Pi or a separate device is your
-call (see above) — either way, setting up Asterisk itself is device-specific
-and outside ZPTTLink's scope; this tutorial covers the ZPTTLink side.
+`asterisk.host` can be `127.0.0.1` if Asterisk runs on this same Pi, or a
+LAN IP if it's a separate device — identical ZPTTLink config either way.
+Setting up Asterisk itself is device-specific and outside ZPTTLink's scope;
+this tutorial covers the ZPTTLink side.
 
-**Both, on one box** (the earlier mention of running both node types from
-the same Zello — two ZPTTLink processes, two configs, one shared Android
-runtime):
+### 3. Standard node + Asterisk node, connected
+
+Two separate, complete nodes, each doing one job, both pointed at the same
+Zello channel — so Zello becomes the bridge between them. Useful when the
+mission needs both reach paths at once: people on handhelds with no
+internet reach you through the standard node's radio; people on the wider
+Asterisk-linked network reach the same channel through the Asterisk node.
 
 ```
-                     Zello network
-                           │
-                 ┌─────────▼─────────┐
-                 │   Waydroid (or     │
-                 │  docker-android)   │
-                 └─────────┬──────────┘
-                Zello audio│Zello audio
-                  (shared) │ (shared)
-              ┌────────────┴────────────┐
-              ▼                         ▼
-      ┌───────────────┐         ┌───────────────┐
-      │ ZPTTLink · A  │         │ ZPTTLink · B  │
-      │ digirig/cm108 │         │   asterisk    │
-      └───────┬───────┘         └───────┬───────┘
-              │ USB serial/HID          │ UDP/USRP
-              ▼                         ▼
-      ┌───────────────┐         ┌───────────────┐
-      │  AIOC/CM108   │         │   Asterisk    │
-      │   interface   │         │ 127.0.0.1/LAN │
-      └───────┬───────┘         └───────┬───────┘
-              ▼                         ▼
-       Radio ↔ Repeater          further network
+                            Zello network
+                        (same channel, both nodes)
+                      ┌────────────┴────────────┐
+                      │                          │
+            ┌─────────▼────────┐       ┌─────────▼────────┐
+            │ NODE 1 · STANDARD │       │ NODE 2 · ASTERISK │
+            │ Waydroid + Zello  │       │ Waydroid + Zello  │
+            │    + ZPTTLink     │       │    + ZPTTLink     │
+            └─────────┬─────────┘       └─────────┬─────────┘
+                      │ USB serial/HID             │ UDP/USRP
+                      ▼                            ▼
+            ┌───────────────────┐       ┌───────────────────┐
+            │ AIOC/CM108/DigiRig│       │      Asterisk      │
+            │      + radio      │       │      (app_rpt)     │
+            └─────────┬─────────┘       └─────────┬─────────┘
+                      ▼                            ▼
+               RF ↔ local users          further linked network
 ```
 
-One Android runtime, one Zello session, two independent ZPTTLink processes
-each with their own config — `radio_type: digirig` (or `cm108`) in one,
-`radio_type: asterisk` in the other. Neither process knows the other exists;
-they just happen to share the same Zello audio source. Everything above runs
-on this one Pi except the physical radio itself and whatever the Asterisk
-side is ultimately linked to.
+Two independent Pis (or one Pi and one existing Asterisk box you already
+have — see [step 7B](#7b-asterisk-node-configure-zpttlink-for-a-network-asterisk-backend)),
+each running its own complete ZPTTLink setup from [1](#1-standard-node) and
+[2](#2-asterisk-node) above. Neither node needs to know the other exists —
+they're connected only in the sense that both carry the same Zello channel,
+which is what lets someone on one side reach someone on the other.
 
 ## 2. Hardware
 
@@ -162,19 +133,14 @@ Shared, regardless of node type:
 
 - No radio interface needed *on this Pi* — the same Pi 4/5 spec above still
   applies, since this box is running Waydroid + Zello either way.
-- **Running Asterisk on this same Pi too?** Make sure it's actually sized
-  for both workloads running at once — Pi 4/5 with 4GB+ RAM handles it, but
-  don't assume a board that was fine for Asterisk alone (often a Pi 3-class
-  board in a dedicated hotspot/node device) will comfortably also run
-  Waydroid. If in doubt, or if you already have a lightweight existing
-  Asterisk node you don't want to touch, keep it separate and point
-  `asterisk.host` at it over the LAN instead — see [step 7B](#7b-asterisk-node-configure-zpttlink-for-a-network-asterisk-backend).
-- Either way, reliable connectivity between ZPTTLink and wherever Asterisk
-  actually runs (localhost is trivially reliable; a separate box needs a
-  stable LAN/VPN path — a flaky link here just means dropped audio, not a
-  hard failure, since USRP is UDP with no persistent connection).
-- If whichever box has a radio physically attached is at a repeater/antenna
-  site, the enclosure/thermal/RFI guidance below applies to that box.
+- If Asterisk also runs on this same Pi, make sure it's sized for both
+  workloads at once (Pi 4/5, 4GB+ RAM) — a board that's fine for Asterisk
+  alone (often a Pi 3-class hotspot/node device) will struggle also running
+  Waydroid. If in doubt, point `asterisk.host` at a separate box instead —
+  see [step 7B](#7b-asterisk-node-configure-zpttlink-for-a-network-asterisk-backend).
+- Reliable connectivity to wherever Asterisk actually runs (a flaky link
+  just means dropped audio, not a hard failure — USRP is UDP, no persistent
+  connection).
 
 ### RF interference
 
@@ -342,12 +308,13 @@ radio-side leg is entirely this network exchange.
 
 ### Point Asterisk at this box
 
-On the **Asterisk side** (not this Pi — the separate device from
-[step 1](#1-what-youre-building)), `chan_usrp`/`simpleusb` needs a node
-stanza that sends to this Pi's IP on the port ZPTTLink is listening on
-(`asterisk.local_port` below — `0` means "let the OS pick a free port," so
-set an explicit port here if Asterisk needs a fixed target) and receives
-from wherever ZPTTLink's `asterisk.host`/`asterisk.port` point.
+On the **Asterisk side** (whether that's this same Pi or a separate box —
+see [2. Asterisk node](#2-asterisk-node)), `chan_usrp`/`simpleusb` needs a
+node stanza that sends to ZPTTLink's IP (`127.0.0.1` if it's this same box)
+on the port ZPTTLink is listening on (`asterisk.local_port` below — `0`
+means "let the OS pick a free port," so set an explicit port here if
+Asterisk needs a fixed target) and receives from wherever ZPTTLink's
+`asterisk.host`/`asterisk.port` point.
 
 The exact config syntax (typically in `rpt.conf`/`usrp.conf` on the Asterisk
 box) varies by Asterisk/`app_rpt` version — treat this as the shape to look
@@ -386,15 +353,11 @@ listens *on* must match ZPTTLink's `asterisk.port`.
 }
 ```
 
-`asterisk.host`/`port` is where ZPTTLink *sends* to (the Asterisk box's
-IP and listen port); `asterisk.local_port` is what ZPTTLink itself listens
-on for the return audio (`0` = OS-assigned — fine unless Asterisk's config
-needs a fixed target, per the previous section).
-
-As covered in [step 1](#1-what-youre-building): use `127.0.0.1` if Asterisk
-runs on this same Pi (fine, as long as it's sized for both workloads), or a
-LAN IP if it's a separate box — same config either way, just a different
-`host` value.
+`asterisk.host`/`port` is where ZPTTLink *sends* to — `127.0.0.1` if
+Asterisk runs on this same Pi, a LAN IP if it's a separate box (see
+[2. Asterisk node](#2-asterisk-node)). `asterisk.local_port` is what
+ZPTTLink itself listens on for the return audio (`0` = OS-assigned — fine
+unless Asterisk's config needs a fixed target, per the previous section).
 
 **This is the one config where `force_serial_ptt: false` +
 `disable_hotkey: false` are required, not optional** — there's no hardware
