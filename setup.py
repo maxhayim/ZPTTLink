@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="zpttlink",
-    version="2.1.0",
-    description="Zello <-> radio PTT gateway with deterministic DTR/RTS/CM108 PTT and pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android",
+    version="3.0.0",
+    description="Open-source Zello <-> radio/Asterisk linking bridge: DTR/RTS/CM108 hardware PTT or Asterisk (USRP) over the network, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android",
     author="Max Hayim",
     packages=find_packages(),
     install_requires=[
