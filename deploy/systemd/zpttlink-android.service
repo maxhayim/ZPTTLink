@@ -1,0 +1,20 @@
+
+[Unit]
+Description=Start Waydroid session and launch Zello for ZPTTLink
+Documentation=https://github.com/maxhayim/ZPTTLink
+After=graphical-session.target waydroid-container.service
+Wants=waydroid-container.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/waydroid session start
+# Give the Waydroid session a moment to come up before launching Zello into it.
+ExecStartPost=/bin/sleep 5
+ExecStartPost=/usr/bin/waydroid app launch com.zello.client
+ExecStop=/usr/bin/waydroid session stop
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
