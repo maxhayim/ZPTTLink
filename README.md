@@ -94,6 +94,7 @@
     </ul>
   </li>
   <li>Audio routing via <a href="https://vb-audio.com/Cable/">VB-Cable (Windows)</a>, <a href="https://existential.audio/blackhole/">BlackHole (macOS)</a>, or <a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback (Linux)</a></li>
+  <li><a href="#simulation-mode">Simulation Mode</a>: a fake radio/Asterisk peer for dev/testing/demos, with no real hardware or network traffic — a periodic synthetic tone burst by default, or a scripted, timed scenario file</li>
 </ul>
 
 <h2>Requirements</h2>
@@ -311,6 +312,52 @@ adb install /path/to/zello.apk</code></pre>
   <li><strong>Asterisk → Zello:</strong> incoming USRP voice frames are resampled up to the device rate and written into <code>audio_output_index</code> (point this at whatever virtual audio device feeds Zello's <em>microphone</em> input — the reverse role <code>audio_output_index</code> plays for the hardware backends, where it feeds the radio's TX audio input instead). The incoming frame's <code>keyup</code> field drives <code>ptt.down()</code>/<code>ptt.up()</code>, which is what triggers the hotkey injection that makes Zello actually transmit the relayed audio.</li>
 </ul>
 
+<h2>Simulation Mode</h2>
+
+<p>Set <code>radio_type: "simulate"</code> and ZPTTLink runs against a <strong>fake radio/Asterisk peer</strong> instead of real hardware or a real Asterisk instance — no serial device, no USB device, no socket, no network traffic at all. It's the exact same full-duplex pipeline as the <a href="#asterisk-usrp-backend">Asterisk backend</a> (same 20ms frames, same local VOX, same <code>keyup</code>-driven <code>ptt.down()</code>/<code>ptt.up()</code> hotkey injection into Zello), just fed synthetic RX audio instead of a real UDP peer. Useful for developing/testing ZPTTLink itself, demoing the full pipeline with nothing real connected, or exercising the GUI end-to-end (device pickers, PTT indicator, config editor) with no hardware on hand at all.</p>
+
+<h3>Configuration</h3>
+
+<pre><code>{
+  "radio_type": "simulate",
+  "force_serial_ptt": false,
+  "disable_hotkey": false,
+  "injection_mode": "auto",
+
+  "simulate": {
+    "interval_s": 10.0,
+    "burst_s": 2.0,
+    "tone_hz": 440.0,
+    "amplitude": 0.3,
+    "script": null,
+    "loop_script": true
+  }
+}
+</code></pre>
+
+<p>Or via the CLI: <code>python -m zpttlink --radio-type simulate --simulate-interval 10 --simulate-tone-hz 440</code>. In the GUI, pick "simulate" from the <strong>Radio Backend</strong> dropdown.</p>
+
+<p>Same as the Asterisk backend, this needs <code>force_serial_ptt: false</code> and a working <code>injection_mode</code> — there's no hardware line to key, so hotkey injection is what actually relays the synthetic RX audio into Zello.</p>
+
+<h3>Two ways to generate RX traffic</h3>
+
+<ul>
+  <li><strong>Periodic tone burst (default, no <code>script</code> set):</strong> every <code>interval_s</code> seconds, a synthetic <code>burst_s</code>-second tone at <code>tone_hz</code> is queued as RX audio with <code>keyup</code> toggling on/off around it — enough to exercise the RX relay path repeatedly without any setup.</li>
+  <li><strong>Scripted scenario (<code>script</code> set to a JSON file path):</strong> a deterministic, timed sequence of RX events instead of random/periodic traffic — for reproducing a specific test case or demoing a fixed scenario. See <a href="examples/simulate-scenario.json"><code>examples/simulate-scenario.json</code></a>:
+    <pre><code>{
+  "events": [
+    { "start_s": 2, "duration_s": 3, "tone_hz": 440, "amplitude": 0.3 },
+    { "start_s": 8, "duration_s": 1.5, "tone_hz": 880, "amplitude": 0.2 }
+  ]
+}
+</code></pre>
+    Each event's <code>start_s</code> is seconds from when ZPTTLink started (or from the start of the loop, if <code>loop_script</code> is true — the default). <code>tone_hz</code>/<code>amplitude</code> are optional per-event overrides of the top-level <code>simulate</code> config. Set <code>loop_script: false</code> (or <code>--simulate-no-loop</code>) to play the scenario once and then go quiet.</li>
+</ul>
+
+<h3>What it does <em>not</em> do</h3>
+
+<p>Simulation Mode never opens a socket and never touches a serial/USB device — <code>send_audio()</code> on this backend is always a no-op, regardless of the outbound <code>keyup</code> state. The only real side effect is whatever <code>injection_mode</code> is configured to do (a real keypress/ADB tap into your actual Zello target), which is the point — it lets you verify the injection path is wired correctly without needing the radio/Asterisk side to be real too.</p>
+
 <h2>RX Audio (Hardware Backends)</h2>
 
 <p>The DigiRig/CM108/Signalink backends now support a second, independent audio path: the radio's <em>received</em> audio relayed back into Zello. This is off by default (matching earlier versions) — set both <code>rx_audio_input_index</code> and <code>rx_audio_output_index</code> to enable it, or use the GUI's <strong>Enable RX (radio → Zello)</strong> checkbox in the Audio panel.</p>
@@ -345,7 +392,7 @@ adb install /path/to/zello.apk</code></pre>
 
 <p>Microphone/Zello audio is routed to the radio's audio output via a virtual audio driver, creating the Zello-to-RF link. If <a href="#rx-audio-hardware-backends">RX audio</a> is configured, the reverse leg (radio's received audio → Zello) runs as a second, independent stream, closing the loop into a full duplex bridge.</p>
 
-<p>The <a href="#asterisk-usrp-backend">Asterisk (USRP) backend</a> works differently from all of the above — audio flows over the network rather than to/from local devices; see that section for how it actually works in that mode.</p>
+<p>The <a href="#asterisk-usrp-backend">Asterisk (USRP) backend</a> works differently from all of the above — audio flows over the network rather than to/from local devices; see that section for how it actually works in that mode. <a href="#simulation-mode">Simulation Mode</a> runs that same code path against a fake peer instead of a real one — no hardware or network involved at all.</p>
 
 <h2>Known Limitations</h2>
 

@@ -42,7 +42,7 @@ except ImportError:
     from main import DEFAULT_CONFIG, list_audio_devices, list_serial_ports, load_config
 
 
-APP_TITLE = "ZPTTLink 3.1.0"
+APP_TITLE = "ZPTTLink 4.0.0"
 CONFIG_PATH = Path("config.json")
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -323,7 +323,7 @@ class MainWindow(QMainWindow):
         layout = QFormLayout(group)
 
         self.radio_type_combo = QComboBox()
-        self.radio_type_combo.addItems(["auto", "digirig", "cm108", "signalink", "asterisk"])
+        self.radio_type_combo.addItems(["auto", "digirig", "cm108", "signalink", "asterisk", "simulate"])
         self.radio_type_combo.setCurrentText(self.cfg.get("radio_type", "auto"))
         self.radio_type_combo.currentTextChanged.connect(self._on_radio_type_changed)
         layout.addRow("Radio Backend", self.radio_type_combo)
@@ -369,16 +369,62 @@ class MainWindow(QMainWindow):
         self.lbl_asterisk_hint.setWordWrap(True)
         layout.addRow("", self.lbl_asterisk_hint)
 
+        sim_cfg = self.cfg.get("simulate", {})
+        self.sim_interval_spin = QDoubleSpinBox()
+        self.sim_interval_spin.setRange(0.1, 3600.0)
+        self.sim_interval_spin.setSuffix(" s")
+        self.sim_interval_spin.setValue(float(sim_cfg.get("interval_s", 10.0)))
+        layout.addRow("Sim RX Interval", self.sim_interval_spin)
+
+        self.sim_burst_spin = QDoubleSpinBox()
+        self.sim_burst_spin.setRange(0.1, 300.0)
+        self.sim_burst_spin.setSuffix(" s")
+        self.sim_burst_spin.setValue(float(sim_cfg.get("burst_s", 2.0)))
+        layout.addRow("Sim RX Burst", self.sim_burst_spin)
+
+        self.sim_tone_spin = QDoubleSpinBox()
+        self.sim_tone_spin.setRange(20.0, 20000.0)
+        self.sim_tone_spin.setSuffix(" Hz")
+        self.sim_tone_spin.setValue(float(sim_cfg.get("tone_hz", 440.0)))
+        layout.addRow("Sim RX Tone", self.sim_tone_spin)
+
+        sim_script_row = QHBoxLayout()
+        self.sim_script_edit = QLineEdit(sim_cfg.get("script") or "")
+        self.sim_script_edit.setPlaceholderText("(none — periodic tone burst instead)")
+        self.btn_sim_script_browse = QPushButton("Browse")
+        self.btn_sim_script_browse.clicked.connect(self._browse_sim_script)
+        sim_script_row.addWidget(self.sim_script_edit, 1)
+        sim_script_row.addWidget(self.btn_sim_script_browse)
+        layout.addRow("Sim Script", self._wrap(sim_script_row))
+
+        self.lbl_sim_hint = QLabel(
+            "SIMULATION MODE: a fake radio/Asterisk peer — no real hardware or network "
+            "traffic. Runs the full pipeline against synthetic RX audio (a periodic "
+            "tone burst, or a scripted scenario file) for dev/testing/demos — see README."
+        )
+        self.lbl_sim_hint.setWordWrap(True)
+        layout.addRow("", self.lbl_sim_hint)
+
         self._on_radio_type_changed(self.radio_type_combo.currentText())
         return group
 
+    def _browse_sim_script(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Simulation Script", "", "JSON (*.json)")
+        if path:
+            self.sim_script_edit.setText(path)
+
     def _on_radio_type_changed(self, value: str):
         is_asterisk = value == "asterisk"
+        is_simulate = value == "simulate"
         for w in (self.serial_combo, self.btn_refresh_serial, self.ptt_mode_combo, self.chk_ignore_initial_ptt):
-            w.setEnabled(not is_asterisk)
+            w.setEnabled(not is_asterisk and not is_simulate)
         for w in (self.asterisk_host_edit, self.asterisk_port_spin):
             w.setEnabled(is_asterisk)
         self.lbl_asterisk_hint.setVisible(is_asterisk)
+        for w in (self.sim_interval_spin, self.sim_burst_spin, self.sim_tone_spin,
+                  self.sim_script_edit, self.btn_sim_script_browse):
+            w.setEnabled(is_simulate)
+        self.lbl_sim_hint.setVisible(is_simulate)
 
     def _build_android_target_group(self):
         group = QGroupBox("Android Target (Zello host)")
@@ -755,6 +801,14 @@ class MainWindow(QMainWindow):
             "port": self.asterisk_port_spin.value(),
             "local_port": self.cfg.get("asterisk", {}).get("local_port", 0),
         }
+        payload["simulate"] = {
+            "interval_s": self.sim_interval_spin.value(),
+            "burst_s": self.sim_burst_spin.value(),
+            "tone_hz": self.sim_tone_spin.value(),
+            "amplitude": self.cfg.get("simulate", {}).get("amplitude", 0.3),
+            "script": self.sim_script_edit.text().strip() or None,
+            "loop_script": self.cfg.get("simulate", {}).get("loop_script", True),
+        }
 
         payload["vox"] = {
             "enabled": self.chk_vox_enabled.isChecked(),
@@ -791,6 +845,13 @@ class MainWindow(QMainWindow):
         if radio_type == "asterisk":
             args.extend(["--asterisk-host", self.asterisk_host_edit.text().strip() or "127.0.0.1"])
             args.extend(["--asterisk-port", str(self.asterisk_port_spin.value())])
+        if radio_type == "simulate":
+            args.extend(["--simulate-interval", str(self.sim_interval_spin.value())])
+            args.extend(["--simulate-burst", str(self.sim_burst_spin.value())])
+            args.extend(["--simulate-tone-hz", str(self.sim_tone_spin.value())])
+            script = self.sim_script_edit.text().strip()
+            if script:
+                args.extend(["--simulate-script", script])
 
         if hotkey and not self.chk_no_hotkey.isChecked():
             args.extend(["--key", hotkey])
