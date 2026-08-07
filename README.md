@@ -22,6 +22,8 @@
 
 <p>Both the radio side and the Zello side are configurable independently: pick a hardware backend or <a href="#asterisk-usrp-backend">Asterisk (USRP)</a> for the radio side, and BlueStacks/Waydroid/docker-android for where Zello runs — see <a href="#android-runtime-targets">Android Runtime Targets</a>.</p>
 
+<p>At its core, ZPTTLink is just a bridge for audio — TX, RX, or both — between Zello and a radio-side target. The <a href="#asterisk-usrp-backend">Asterisk (USRP) backend</a> has no physical hardware to be near, which means that side of the bridge can run anywhere with network reach to Asterisk: a Raspberry Pi at a site, or a commodity cloud <a href="docs/vps-deployment.md">VPS</a> with no local hardware at all.</p>
+
 <p>This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.</p>
 
 <h2>Signal Flow Overview</h2>
@@ -129,7 +131,9 @@
 
 <h2>Installation and Setup</h2>
 
-<p><strong>Deploying to an unattended Raspberry Pi</strong> (e.g. boxed up at a remote site)? See the dedicated <a href="docs/raspberry-pi-repeater-deployment.md">Raspberry Pi deployment tutorial</a> — hardware, headless OS setup, Waydroid + Zello, systemd autostart with a watchdog, and outdoor/unattended hardening. The steps below are the general/manual install; the Pi tutorial builds on them.</p>
+<p><strong>Deploying to an unattended Raspberry Pi</strong> (e.g. boxed up at a remote site)? See the dedicated <a href="docs/raspberry-pi-repeater-deployment.md">Raspberry Pi deployment tutorial</a> — hardware, headless OS setup, Waydroid + Zello, systemd autostart with a watchdog, and outdoor/unattended hardening.</p>
+
+<p><strong>Deploying the <a href="#asterisk-usrp-backend">Asterisk backend</a> with no local hardware at all?</strong> See the dedicated <a href="docs/vps-deployment.md">VPS deployment tutorial</a> — running ZPTTLink and Zello (via docker-android) on a commodity cloud server, with no radio-side hardware or physical site involved. The steps below are the general/manual install; both tutorials build on them.</p>
 
 <ol>
   <li>Install Python:
