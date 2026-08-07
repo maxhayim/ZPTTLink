@@ -103,6 +103,11 @@ each running its own complete ZPTTLink setup from [1](#1-standard-node) and
 they're connected only in the sense that both carry the same Zello channel,
 which is what lets someone on one side reach someone on the other.
 
+Node 2 doesn't have to be a Pi at all — since the Asterisk node has no
+physical hardware to be near, it can just as easily be a
+[VPS](vps-deployment.md) somewhere with network reach to Asterisk,
+while node 1 stays the physical standard node at the actual site.
+
 ## 2. Hardware
 
 Shared, regardless of node type:
