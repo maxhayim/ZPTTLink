@@ -1,0 +1,7 @@
+{
+  "events": [
+    { "start_s": 2, "duration_s": 3, "tone_hz": 440, "amplitude": 0.3 },
+    { "start_s": 8, "duration_s": 1.5, "tone_hz": 880, "amplitude": 0.2 },
+    { "start_s": 12, "duration_s": 4, "tone_hz": 220, "amplitude": 0.35 }
+  ]
+}
