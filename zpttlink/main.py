@@ -240,6 +240,21 @@ DEFAULT_CONFIG = {
         "local_port": 0
     },
 
+    # radio_type: "simulate" is a fake radio/Asterisk peer - no hardware, no
+    # network traffic. Runs the same full-duplex pipeline as the Asterisk
+    # backend against synthetic RX audio, for dev/testing/demos with nothing
+    # real connected. With no "script" set, it generates a periodic tone burst
+    # every interval_s; with "script" set, it plays a scripted scenario file
+    # instead (see the Simulation Mode section of the README).
+    "simulate": {
+        "interval_s": 10.0,
+        "burst_s": 2.0,
+        "tone_hz": 440.0,
+        "amplitude": 0.3,
+        "script": None,
+        "loop_script": True
+    },
+
     "logging": {
         "level": "INFO",
         "file": DEFAULT_LOGFILE
@@ -780,6 +795,155 @@ class AsteriskRadio(RadioInterfaceBase):
             self.rx_thread = None
 
 
+class SimulatedRadio(RadioInterfaceBase):
+    """A fake radio/Asterisk peer - no real hardware, no real network traffic.
+    Exercises the exact same code path as AsteriskRadio (transports_audio=True,
+    the same 20ms USRP-shaped frames through send_audio()/recv_audio_nowait()),
+    so the full pipeline - local VOX, outbound framing, inbound keyup driving
+    ptt.down()/up() and hotkey injection - runs for real against synthetic
+    traffic instead of a live Asterisk instance. Nothing here ever touches a
+    socket or a hardware line, so it's inherently safe to run anywhere.
+
+    RX traffic is either a scripted scenario (a JSON file of timed events) or,
+    with no script configured, a periodic synthetic tone burst. See the
+    Simulation Mode section of the README for the script file format."""
+
+    name = "simulate"
+    transports_audio = True
+
+    def __init__(self, interval_s=10.0, burst_s=2.0, tone_hz=440.0, amplitude=0.3,
+                 script_path=None, loop_script=True):
+        self.interval_s = max(0.1, float(interval_s))
+        self.burst_s = max(0.1, float(burst_s))
+        self.tone_hz = float(tone_hz)
+        self.amplitude = max(0.0, min(1.0, float(amplitude)))
+        self.script_path = script_path
+        self.loop_script = bool(loop_script)
+        self.script_events = None
+        self.rx_queue = queue.Queue(maxsize=50)
+        self.gen_thread = None
+        self.stop_flag = threading.Event()
+
+    def open(self):
+        if self.script_path:
+            self.script_events = self._load_script(self.script_path)
+            logger.info(
+                f"SIMULATION MODE active - no real hardware or network connection. "
+                f"Playing scripted scenario from {self.script_path} "
+                f"({len(self.script_events)} events, loop={self.loop_script})."
+            )
+        else:
+            logger.info(
+                f"SIMULATION MODE active - no real hardware or network connection. "
+                f"Synthetic RX burst every {self.interval_s:.0f}s "
+                f"({self.burst_s:.1f}s @ {self.tone_hz:.0f}Hz)."
+            )
+        self.stop_flag.clear()
+        self.gen_thread = threading.Thread(target=self._generate_loop, daemon=True)
+        self.gen_thread.start()
+
+    @staticmethod
+    def _load_script(path):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        events = data.get("events", []) if isinstance(data, dict) else data
+        if not events:
+            raise RuntimeError(f"Simulation script {path} has no events")
+        return sorted(events, key=lambda e: float(e.get("start_s", 0)))
+
+    def _generate_loop(self):
+        try:
+            if self.script_events:
+                self._run_script()
+            else:
+                self._run_periodic()
+        except Exception as e:
+            logger.error(f"SIMULATION MODE: generator stopped unexpectedly: {e}")
+
+    def _run_periodic(self):
+        while not self.stop_flag.wait(self.interval_s):
+            self._emit_burst(self.burst_s, self.tone_hz, self.amplitude)
+
+    def _run_script(self):
+        while not self.stop_flag.is_set():
+            t0 = time.monotonic()
+            for event in self.script_events:
+                target = t0 + float(event.get("start_s", 0))
+                while not self.stop_flag.is_set():
+                    remaining = target - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self.stop_flag.wait(min(remaining, 0.5))
+                if self.stop_flag.is_set():
+                    return
+                self._emit_burst(
+                    float(event.get("duration_s", 1.0)),
+                    float(event.get("tone_hz", self.tone_hz)),
+                    max(0.0, min(1.0, float(event.get("amplitude", self.amplitude)))),
+                )
+            if not self.loop_script:
+                return
+
+    def _emit_burst(self, duration_s, tone_hz, amplitude):
+        logger.info(
+            f"SIMULATION MODE: synthetic RX keyup -> ON ({duration_s:.1f}s @ {tone_hz:.0f}Hz)"
+        )
+        n_frames = max(1, int(round(duration_s * USRP_SAMPLE_RATE / USRP_FRAME_SAMPLES)))
+        phase = 0.0
+        phase_inc = 2.0 * np.pi * tone_hz / USRP_SAMPLE_RATE
+        t = np.arange(USRP_FRAME_SAMPLES, dtype=np.float32)
+        frame_period = USRP_FRAME_SAMPLES / float(USRP_SAMPLE_RATE)
+        for _ in range(n_frames):
+            if self.stop_flag.is_set():
+                return
+            samples = (amplitude * np.sin(phase + phase_inc * t)).astype(np.float32)
+            phase = (phase + phase_inc * USRP_FRAME_SAMPLES) % (2.0 * np.pi)
+            self._push(samples, True)
+            self.stop_flag.wait(frame_period)
+        logger.info("SIMULATION MODE: synthetic RX keyup -> OFF")
+        self._push(np.zeros(USRP_FRAME_SAMPLES, dtype=np.float32), False)
+
+    def _push(self, samples, keyup):
+        item = (samples, keyup)
+        try:
+            self.rx_queue.put_nowait(item)
+        except queue.Full:
+            try:
+                self.rx_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.rx_queue.put_nowait(item)
+            except queue.Full:
+                pass
+
+    def recv_audio_nowait(self):
+        try:
+            return self.rx_queue.get_nowait()
+        except queue.Empty:
+            return None
+
+    def send_audio(self, pcm16_array, keyup, dry=False):
+        # There is no real peer in simulation mode, so this is always a no-op -
+        # audio_callback already logs the local VOX keyup edge, and `dry` makes
+        # no difference here since nothing is ever actually sent either way.
+        pass
+
+    def ptt_on(self, dry=False):
+        if not dry:
+            logger.debug("SIMULATION MODE: relayed PTT DOWN (from synthetic keyup)")
+
+    def ptt_off(self, dry=False):
+        if not dry:
+            logger.debug("SIMULATION MODE: relayed PTT UP (from synthetic keyup)")
+
+    def close(self):
+        self.stop_flag.set()
+        if self.gen_thread is not None:
+            self.gen_thread.join(timeout=2.0)
+            self.gen_thread = None
+
+
 def choose_radio_type(cfg, args):
     explicit = getattr(args, "radio_type", None)
     if explicit:
@@ -877,6 +1041,24 @@ def build_radio_backend(cfg, args):
             else ast_cfg.get("local_port", 0)
         )
         return AsteriskRadio(host=host, port=port, local_port=local_port)
+
+    if radio_type == "simulate":
+        if np is None:
+            logger.error("numpy is required for Simulation Mode.")
+            sys.exit(2)
+        sim_cfg = cfg.get("simulate", {})
+        script_path = args.simulate_script or sim_cfg.get("script")
+        if script_path and not os.path.exists(script_path):
+            logger.error(f"Simulation script not found: {script_path}")
+            sys.exit(2)
+        return SimulatedRadio(
+            interval_s=args.simulate_interval if args.simulate_interval is not None else sim_cfg.get("interval_s", 10.0),
+            burst_s=args.simulate_burst if args.simulate_burst is not None else sim_cfg.get("burst_s", 2.0),
+            tone_hz=args.simulate_tone_hz if args.simulate_tone_hz is not None else sim_cfg.get("tone_hz", 440.0),
+            amplitude=args.simulate_amplitude if args.simulate_amplitude is not None else sim_cfg.get("amplitude", 0.3),
+            script_path=script_path,
+            loop_script=(not args.simulate_no_loop) and bool(sim_cfg.get("loop_script", True)),
+        )
 
     if radio_type == "signalink":
         return SignalinkRadio()
@@ -1187,7 +1369,7 @@ def maybe_log_rx_level(level, enabled):
 def main():
     global keyboard, logger, audio_stream, rx_audio_stream
 
-    parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 3.1 Zello/radio/Asterisk bridge")
+    parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 4.0 Zello/radio/Asterisk bridge")
     parser.add_argument("--config", default=DEFAULT_CONFIG_FILE)
     parser.add_argument("--key", help="Hotkey to send to Zello")
     parser.add_argument("--serial", help="Serial port override")
@@ -1201,7 +1383,7 @@ def main():
     parser.add_argument("--baud", type=int, default=None)
     parser.add_argument(
         "--radio-type",
-        choices=["auto", "cm108", "digirig", "signalink", "asterisk"],
+        choices=["auto", "cm108", "digirig", "signalink", "asterisk", "simulate"],
         default=None,
     )
     parser.add_argument("--ptt-output", choices=["none", "dtr", "rts"], default=None)
@@ -1213,6 +1395,17 @@ def main():
         default=None,
         help="Local UDP port to bind for the Asterisk USRP backend (0 = OS-assigned)",
     )
+    parser.add_argument(
+        "--simulate-script",
+        default=None,
+        help="Path to a Simulation Mode scenario JSON file (--radio-type simulate). "
+        "Omit for a periodic synthetic tone burst instead.",
+    )
+    parser.add_argument("--simulate-interval", type=float, default=None, help="Seconds between synthetic RX bursts (no script)")
+    parser.add_argument("--simulate-burst", type=float, default=None, help="Synthetic RX burst duration in seconds (no script)")
+    parser.add_argument("--simulate-tone-hz", type=float, default=None, help="Synthetic RX tone frequency in Hz")
+    parser.add_argument("--simulate-amplitude", type=float, default=None, help="Synthetic RX tone amplitude (0.0-1.0)")
+    parser.add_argument("--simulate-no-loop", action="store_true", help="Play a Simulation Mode script once instead of looping")
     parser.add_argument("--no-hotkey", action="store_true")
     parser.add_argument("--test-ptt", action="store_true")
     parser.add_argument("--list-serial", action="store_true")
@@ -1539,14 +1732,16 @@ def main():
     usrp_remote_keyed = [False]
 
     if backend.transports_audio:
+        _peer_label = "Asterisk" if backend.name == "asterisk" else "the simulated peer"
         logger.info(
-            f"Asterisk USRP mode: local audio keys Asterisk directly; incoming Asterisk "
-            f"keyup relays into Zello via {'hotkey injection' if hotkey_enabled else 'PTT UP/DOWN log only (hotkey injection disabled!)'}."
+            f"{'Asterisk USRP' if backend.name == 'asterisk' else 'Simulation'} mode: "
+            f"local audio keys {_peer_label} directly; incoming keyup relays into Zello via "
+            f"{'hotkey injection' if hotkey_enabled else 'PTT UP/DOWN log only (hotkey injection disabled!)'}."
         )
         if not hotkey_enabled:
             logger.warning(
-                "hotkey_enabled is False with radio_type=asterisk: audio arriving from "
-                "Asterisk will be written into Zello's mic input, but Zello won't be told "
+                f"hotkey_enabled is False with radio_type={backend.name}: audio arriving from "
+                f"{_peer_label} will be written into Zello's mic input, but Zello won't be told "
                 "to transmit it unless Zello's own VOX is enabled. Set force_serial_ptt: "
                 "false and configure injection_mode to relay it properly."
             )
@@ -1582,10 +1777,10 @@ def main():
                 rx_samples, rx_keyup = rx
                 if rx_keyup and not usrp_remote_keyed[0]:
                     usrp_remote_keyed[0] = True
-                    ptt.down(source="asterisk-rx")
+                    ptt.down(source=f"{backend.name}-rx")
                 elif not rx_keyup and usrp_remote_keyed[0]:
                     usrp_remote_keyed[0] = False
-                    ptt.up(source="asterisk-rx")
+                    ptt.up(source=f"{backend.name}-rx")
                 up = resample_linear(rx_samples, USRP_SAMPLE_RATE, samplerate)
                 outdata[:] = fit_frame(up, frames)
             else:
@@ -1685,7 +1880,7 @@ def main():
         f"PTT system ready (radio_backend={backend.name}, hotkey_enabled={hotkey_enabled}, "
         f"rx_enabled={rx_enabled and rx_audio_stream is not None}, dry_run={args.dry_run})"
     )
-    logger.info("ZPTTLink 3.1 bridge is running successfully! (Ctrl+C to exit)")
+    logger.info("ZPTTLink 4.0 bridge is running successfully! (Ctrl+C to exit)")
     sd_notify("READY=1")
 
     exit_code = 0
