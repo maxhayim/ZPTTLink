@@ -1,3 +1,6 @@
+> [!WARNING]
+> **ZPTTLink is under active development** and not yet stable, features and config may still change. Give the repo a **Star** and **Watch** it to get notified when a new release lands.
+
 <p align="center">
   <img src="assets/logo.png" alt="ZPTTLink Logo" width="200"/>
 </p>
