@@ -7,6 +7,7 @@ import queue
 import shutil
 import signal
 import socket
+import socketserver
 import struct
 import subprocess
 import sys
@@ -253,6 +254,21 @@ DEFAULT_CONFIG = {
         "amplitude": 0.3,
         "script": None,
         "loop_script": True
+    },
+
+    # A tiny loopback-only (127.0.0.1, always - never configurable to bind
+    # elsewhere) control channel the GUI's floating PTT overlay button uses to
+    # trigger this process's PTTController from a separate process. Useful for
+    # third-party PTT apps (e.g. one with no VOX) where you want a small
+    # always-on-top button positioned over that app's own window instead of
+    # relying on ZPTTLink's own hotkey injection. Off by default.
+    "overlay": {
+        "control_enabled": False,
+        "control_port": 8765,
+        "x": None,
+        "y": None,
+        "size": 90,
+        "opacity": 0.55
     },
 
     "logging": {
@@ -1185,6 +1201,60 @@ class PTTController:
             self.backend.ptt_off(dry=self.dry_run)
 
 
+class OverlayControlServer:
+    """A tiny loopback-only TCP server that lets the GUI's floating PTT
+    overlay button (a separate process - the GUI launches the core via
+    QProcess) trigger this process's own PTTController. Always binds to
+    127.0.0.1 regardless of config, since this is a local control channel
+    for one user's own overlay window, not a network feature.
+
+    Protocol is deliberately trivial: newline-delimited "DOWN"/"UP" lines,
+    one connection held open by the overlay for its whole lifetime."""
+
+    def __init__(self, ptt, port):
+        self.ptt = ptt
+        self.port = int(port)
+        self.server = None
+        self.thread = None
+
+    def start(self):
+        ptt = self.ptt
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                for line in self.rfile:
+                    cmd = line.strip().upper()
+                    if cmd == b"DOWN":
+                        ptt.down(source="overlay")
+                    elif cmd == b"UP":
+                        ptt.up(source="overlay")
+
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", self.port), Handler)
+        self.server.daemon_threads = True
+        self.server.allow_reuse_address = True
+        bound_port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        logger.info(f"PTT overlay control listening on 127.0.0.1:{bound_port} (loopback only)")
+        return bound_port
+
+    def stop(self):
+        # Belt-and-suspenders: an overlay left holding PTT down when the core
+        # exits should not leave the radio keyed.
+        try:
+            self.ptt.up(source="overlay-shutdown")
+        except Exception:
+            pass
+        if self.server is not None:
+            try:
+                self.server.shutdown()
+                self.server.server_close()
+            except Exception:
+                pass
+        if self.thread is not None:
+            self.thread.join(timeout=2.0)
+
+
 class AudioGate:
     def __init__(self, threshold=0.02, attack_ms=40, release_ms=120, hang_ms=300):
         self.threshold = float(threshold)
@@ -1369,7 +1439,7 @@ def maybe_log_rx_level(level, enabled):
 def main():
     global keyboard, logger, audio_stream, rx_audio_stream
 
-    parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 4.0 Zello/radio/Asterisk bridge")
+    parser = argparse.ArgumentParser(prog="zpttlink", description="ZPTTLink 4.1 Zello/radio/Asterisk bridge")
     parser.add_argument("--config", default=DEFAULT_CONFIG_FILE)
     parser.add_argument("--key", help="Hotkey to send to Zello")
     parser.add_argument("--serial", help="Serial port override")
@@ -1406,6 +1476,19 @@ def main():
     parser.add_argument("--simulate-tone-hz", type=float, default=None, help="Synthetic RX tone frequency in Hz")
     parser.add_argument("--simulate-amplitude", type=float, default=None, help="Synthetic RX tone amplitude (0.0-1.0)")
     parser.add_argument("--simulate-no-loop", action="store_true", help="Play a Simulation Mode script once instead of looping")
+
+    parser.add_argument(
+        "--overlay-control",
+        action="store_true",
+        help="Start the loopback-only (127.0.0.1) control channel the GUI's floating "
+        "PTT overlay button uses to trigger this process's PTT.",
+    )
+    parser.add_argument(
+        "--overlay-control-port",
+        type=int,
+        default=None,
+        help="Port for --overlay-control to listen on (default 8765)",
+    )
     parser.add_argument("--no-hotkey", action="store_true")
     parser.add_argument("--test-ptt", action="store_true")
     parser.add_argument("--list-serial", action="store_true")
@@ -1592,6 +1675,18 @@ def main():
         adb_code=adb_code,
         adb_serial=adb_serial_value,
     )
+
+    overlay_cfg = cfg.get("overlay", {})
+    overlay_control_enabled = bool(args.overlay_control or overlay_cfg.get("control_enabled", False))
+    overlay_server = None
+    if overlay_control_enabled:
+        overlay_port = int(
+            args.overlay_control_port
+            if args.overlay_control_port is not None
+            else overlay_cfg.get("control_port", 8765)
+        )
+        overlay_server = OverlayControlServer(ptt, overlay_port)
+        overlay_server.start()
 
     if args.test_ptt:
         logger.info("Testing PTT for 1 second...")
@@ -1880,7 +1975,7 @@ def main():
         f"PTT system ready (radio_backend={backend.name}, hotkey_enabled={hotkey_enabled}, "
         f"rx_enabled={rx_enabled and rx_audio_stream is not None}, dry_run={args.dry_run})"
     )
-    logger.info("ZPTTLink 4.0 bridge is running successfully! (Ctrl+C to exit)")
+    logger.info("ZPTTLink 4.1 bridge is running successfully! (Ctrl+C to exit)")
     sd_notify("READY=1")
 
     exit_code = 0
@@ -1918,6 +2013,9 @@ def main():
             ptt.up(source="shutdown")
         except Exception:
             pass
+
+        if overlay_server is not None:
+            overlay_server.stop()
 
         try:
             if audio_stream is not None:

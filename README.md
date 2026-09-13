@@ -94,6 +94,7 @@
       <li>Config editor with save button</li>
       <li>Android target / injection mode selector, with an ADB serial field for docker-android targets</li>
       <li>RX audio device selectors and VOX threshold, with a one-click enable/disable toggle</li>
+      <li><a href="#floating-ptt-overlay-button">Floating PTT overlay button</a> — a small always-on-top, draggable button you can position over any other app's window</li>
     </ul>
   </li>
   <li>Audio routing via <a href="https://vb-audio.com/Cable/">VB-Cable (Windows)</a>, <a href="https://existential.audio/blackhole/">BlackHole (macOS)</a>, or <a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback (Linux)</a></li>
@@ -223,6 +224,31 @@ source venv/bin/activate</code></pre>
   <li>Linux</li>
   <li>Raspberry Pi</li>
 </ul>
+
+<h2>Floating PTT Overlay Button</h2>
+
+<p>Click <strong>Show PTT Overlay</strong> in the GUI and a small, frameless, semi-transparent, always-on-top PTT button appears — one you can drag anywhere on screen and position over the top of <em>any other window</em>, not just ZPTTLink's own. This exists for cases like a third-party PTT app (e.g. one with no VOX, only its own on-screen PTT button) where you want to trigger ZPTTLink's PTT without switching focus away from that app at all.</p>
+
+<ul>
+  <li><strong>Left-click and hold</strong> the button to talk; release to stop — the same press-and-hold gesture as the GUI's main PTT button.</li>
+  <li><strong>Right-click and drag</strong> to reposition it — kept deliberately separate from the talk gesture so dragging can never misfire a PTT. Its position is saved automatically and restored next time.</li>
+  <li>The small <strong>×</strong> in the corner closes it.</li>
+</ul>
+
+<p>The overlay is a widget in the GUI process, but the actual PTT logic (VOX, hotkey injection, hardware lines) runs in a separate core process that the GUI launches — so the overlay talks to it over a tiny control channel bound to <code>127.0.0.1</code> only (never exposed on the network), started automatically whenever the GUI starts the runtime. <strong>The overlay button only actually triggers PTT once you've clicked Start</strong> — before that, or if the core isn't running, clicking it does nothing (logged once, not on every click).</p>
+
+<pre><code>{
+  "overlay": {
+    "control_port": 8765,
+    "x": 1200,
+    "y": 80,
+    "size": 90,
+    "opacity": 0.55
+  }
+}
+</code></pre>
+
+<p><code>x</code>/<code>y</code> are written automatically when you drag the overlay — no need to edit them by hand. <code>size</code>/<code>opacity</code> can be tuned directly in <code>config.json</code> if you want a bigger/smaller or more/less transparent button. This same control channel also now backs the GUI's main PTT button, which — before this — only updated its own on-screen indicator and didn't actually reach the running core process either.</p>
 
 <h2>Android Runtime Targets</h2>
 
