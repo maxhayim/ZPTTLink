@@ -6,6 +6,7 @@ import logging
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 from contextlib import redirect_stderr, redirect_stdout
@@ -14,7 +15,7 @@ from typing import Optional
 
 import sounddevice as sd
 from PySide6.QtCore import QProcess, QTimer, Qt
-from PySide6.QtGui import QIcon, QTextCursor
+from PySide6.QtGui import QColor, QIcon, QPainter, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -42,7 +43,7 @@ except ImportError:
     from main import DEFAULT_CONFIG, list_audio_devices, list_serial_ports, load_config
 
 
-APP_TITLE = "ZPTTLink 4.0.0"
+APP_TITLE = "ZPTTLink 4.1.0"
 CONFIG_PATH = Path("config.json")
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -231,6 +232,147 @@ class PTTPushButton(QPushButton):
         self._on_up()
 
 
+class OverlaySocketClient:
+    """Talks to the running core's OverlayControlServer (127.0.0.1 only) so
+    the floating PTT overlay - a widget in this GUI process - can trigger PTT
+    in the core, which runs as a separate QProcess. Reconnects lazily; a
+    failed send just means the core isn't running yet, not an error worth
+    spamming the log for."""
+
+    def __init__(self, port, log_fn=None):
+        self.port = int(port)
+        self.sock = None
+        self._log = log_fn or (lambda msg: None)
+        self._warned = False
+
+    def _ensure_connected(self):
+        if self.sock is not None:
+            return True
+        try:
+            self.sock = socket.create_connection(("127.0.0.1", self.port), timeout=1.0)
+            self._warned = False
+            return True
+        except OSError:
+            self.sock = None
+            if not self._warned:
+                self._log(
+                    f"PTT overlay: can't reach core control channel on "
+                    f"127.0.0.1:{self.port} (is the runtime started?)"
+                )
+                self._warned = True
+            return False
+
+    def send(self, cmd):
+        if not self._ensure_connected():
+            return
+        try:
+            self.sock.sendall(cmd.encode("ascii") + b"\n")
+        except OSError:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+
+    def close(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+
+
+class PTTOverlayWindow(QWidget):
+    """A small, frameless, translucent, always-on-top circular PTT button
+    meant to sit over a third-party app's own window (e.g. one with no VOX)
+    so its PTT can be triggered without switching focus to ZPTTLink itself.
+
+    Left-click: press-and-hold to talk. Right-click-drag: reposition (kept
+    separate from the talk gesture so dragging never misfires a PTT). The
+    small "x" in the corner closes it."""
+
+    CLOSE_ZONE = 16
+
+    def __init__(self, cfg, client, on_close, on_moved, parent=None):
+        super().__init__(parent, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.client = client
+        self.on_close = on_close
+        self.on_moved = on_moved
+        self.size_px = max(50, int(cfg.get("size", 90)))
+        self.opacity = max(0.1, min(1.0, float(cfg.get("opacity", 0.55))))
+        self.setFixedSize(self.size_px, self.size_px)
+        self._pressed = False
+        self._drag_offset = None
+
+        x, y = cfg.get("x"), cfg.get("y")
+        if x is not None and y is not None:
+            self.move(int(x), int(y))
+        else:
+            screen = QApplication.primaryScreen()
+            geo = screen.availableGeometry() if screen else None
+            if geo is not None:
+                self.move(geo.right() - self.size_px - 40, geo.top() + 80)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        alpha = int(255 * min(1.0, self.opacity + (0.3 if self._pressed else 0.0)))
+        fill = QColor(211, 47, 47, alpha) if self._pressed else QColor(43, 43, 43, alpha)
+        painter.setBrush(fill)
+        painter.setPen(QColor(255, 255, 255, min(255, alpha + 60)))
+        painter.drawEllipse(2, 2, self.size_px - 4, self.size_px - 4)
+
+        painter.setPen(QColor(255, 255, 255, 235))
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(max(8, self.size_px // 7))
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignCenter, "PTT")
+
+        painter.setPen(QColor(255, 255, 255, 200))
+        painter.drawText(
+            self.size_px - self.CLOSE_ZONE - 4, 2, self.CLOSE_ZONE, self.CLOSE_ZONE,
+            Qt.AlignCenter, "×",
+        )
+
+    def _in_close_zone(self, pos):
+        return pos.x() >= self.size_px - self.CLOSE_ZONE - 4 and pos.y() <= self.CLOSE_ZONE + 2
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self._in_close_zone(event.position().toPoint()):
+                self.on_close()
+                return
+            self._pressed = True
+            self.update()
+            self.client.send("DOWN")
+        elif event.button() == Qt.RightButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.pos()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None and (event.buttons() & Qt.RightButton):
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._pressed:
+            self._pressed = False
+            self.update()
+            self.client.send("UP")
+        elif event.button() == Qt.RightButton and self._drag_offset is not None:
+            self._drag_offset = None
+            self.on_moved(self.x(), self.y())
+
+    def closeEvent(self, event):
+        if self._pressed:
+            # Never leave the radio/hotkey keyed just because the overlay closed mid-press.
+            self.client.send("UP")
+            self._pressed = False
+        super().closeEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -243,6 +385,15 @@ class MainWindow(QMainWindow):
         self.current_ptt_down = False
         self.ignore_next_initial_ptt_state = False
         self.log_handler = None
+        self.overlay_window: Optional[PTTOverlayWindow] = None
+        # One control-channel client shared by the overlay button and the
+        # main window's own PTT button - both just trigger the same core
+        # PTTController over the loopback control channel (see
+        # OverlayControlServer in main.py). Created once up front so it's
+        # available to the main PTT button even if the overlay is never shown.
+        self.core_client = OverlaySocketClient(
+            int(self.cfg.get("overlay", {}).get("control_port", 8765)), log_fn=self.log
+        )
 
         self.serial_refresh_timer = QTimer(self)
         self.serial_refresh_timer.setInterval(2500)
@@ -273,7 +424,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         try:
+            self.hide_overlay()
             self.stop_runtime()
+            self.core_client.close()
         finally:
             if self.log_handler:
                 logging.getLogger().removeHandler(self.log_handler)
@@ -305,8 +458,16 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.btn_browse_icon = QPushButton("Set Icon…")
         self.btn_browse_icon.clicked.connect(self.choose_icon)
+        self.btn_overlay = QPushButton("Show PTT Overlay")
+        self.btn_overlay.setCheckable(True)
+        self.btn_overlay.setToolTip(
+            "A small always-on-top floating PTT button you can position over any "
+            "window (e.g. a third-party PTT app with no VOX). Left-click to talk, "
+            "right-click-drag to reposition."
+        )
+        self.btn_overlay.toggled.connect(self._on_overlay_toggled)
 
-        for btn in [self.btn_save, self.btn_test, self.btn_start, self.btn_stop, self.btn_browse_icon]:
+        for btn in [self.btn_save, self.btn_test, self.btn_start, self.btn_stop, self.btn_browse_icon, self.btn_overlay]:
             controls.addWidget(btn)
         root.addLayout(controls)
 
@@ -900,6 +1061,9 @@ class MainWindow(QMainWindow):
                 args.extend(["--rx-audio-output-index", str(self.rx_audio_out_combo.currentData())])
             args.extend(["--rx-vox-threshold", str(self.spin_rx_vox_threshold.value())])
 
+        overlay_port = int(self.cfg.get("overlay", {}).get("control_port", 8765))
+        args.extend(["--overlay-control", "--overlay-control-port", str(overlay_port)])
+
         return args
 
     def start_runtime(self):
@@ -998,6 +1162,7 @@ class MainWindow(QMainWindow):
         self.current_ptt_down = True
         self.set_indicator("tx", "TX active")
         self.log("Manual PTT DOWN")
+        self.core_client.send("DOWN")
 
     def manual_ptt_up(self):
         if not self.current_ptt_down:
@@ -1005,6 +1170,63 @@ class MainWindow(QMainWindow):
         self.current_ptt_down = False
         self.set_indicator("armed", "Ready")
         self.log("Manual PTT UP")
+        self.core_client.send("UP")
+
+    def _on_overlay_toggled(self, checked: bool):
+        if checked:
+            self.show_overlay()
+        else:
+            self.hide_overlay()
+
+    def show_overlay(self):
+        if self.overlay_window is not None:
+            return
+        overlay_cfg = self.cfg.get("overlay", {})
+        self.overlay_window = PTTOverlayWindow(
+            cfg=overlay_cfg,
+            client=self.core_client,
+            on_close=self.hide_overlay,
+            on_moved=self._save_overlay_position,
+        )
+        self.overlay_window.show()
+        self.btn_overlay.blockSignals(True)
+        self.btn_overlay.setChecked(True)
+        self.btn_overlay.blockSignals(False)
+        self.btn_overlay.setText("Hide PTT Overlay")
+        self.log(
+            "Floating PTT overlay shown — left-click to talk, right-click-drag to "
+            "reposition. Requires the runtime to be started to actually trigger PTT."
+        )
+
+    def hide_overlay(self):
+        if self.overlay_window is not None:
+            self.overlay_window.close()
+            self.overlay_window = None
+        self.btn_overlay.blockSignals(True)
+        self.btn_overlay.setChecked(False)
+        self.btn_overlay.blockSignals(False)
+        self.btn_overlay.setText("Show PTT Overlay")
+
+    def _save_overlay_position(self, x: int, y: int):
+        self._update_overlay_config(x=x, y=y)
+
+    def _update_overlay_config(self, **kwargs):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = dict(self.cfg)
+        overlay = dict(data.get("overlay", {}))
+        overlay.update(kwargs)
+        data["overlay"] = overlay
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+                f.write("\n")
+        except Exception as e:
+            self.log(f"Failed to save overlay position: {e}")
+            return
+        self.cfg["overlay"] = overlay
 
 
 def launch_gui(argv=None):
