@@ -29,6 +29,30 @@
 
 <p>This tool is ideal for GMRS and ham radio operators, emergency communications volunteers, and hobbyists who want to build a software-based radio gateway.</p>
 
+<h2>Works With Any PTT App</h2>
+
+<p>Zello is the most common app ZPTTLink is used with, but nothing about ZPTTLink is Zello-specific. The bridge mechanism — a keyboard hotkey (<code>pynput</code>/<code>ydotool</code>), a screen tap (<code>adb</code>), or a hardware PTT line, plus an audio input/output — doesn't care which app is on the other end. If an app has <em>some</em> kind of push-to-talk trigger and produces/consumes audio, ZPTTLink can bridge it to a radio or an <a href="#asterisk-usrp-backend">Asterisk (USRP)</a> endpoint.</p>
+
+<p>Popular PTT/walkie-talkie-style apps people have asked about or used with ZPTTLink include:</p>
+
+<ul>
+  <li><a href="https://zello.com/">Zello</a> — the most tested target, with a dedicated PTT hotkey and a Toggle mode</li>
+  <li><strong>CB Talk</strong> — no built-in VOX, only an on-screen PTT button; a good fit for the <a href="#floating-ptt-overlay-button">floating PTT overlay button</a></li>
+  <li><strong>Voxer</strong></li>
+  <li><strong>TeamSpeak</strong></li>
+  <li><strong>Discord</strong> (its own push-to-talk keybind)</li>
+  <li>...and more — any app with a PTT-style trigger is a candidate</li>
+</ul>
+
+<p>What actually determines compatibility isn't the app, it's two things:</p>
+
+<ul>
+  <li><strong>Trigger:</strong> does the app support a hotkey (for <code>pynput</code>/<code>ydotool</code>), Toggle mode rather than Hold (required for <code>adb</code>, since ADB key taps are edge-triggered — see <a href="#android-runtime-targets">Android Runtime Targets</a>), or does it only have an on-screen PTT button you can park the <a href="#floating-ptt-overlay-button">floating PTT overlay button</a> over instead?</li>
+  <li><strong>Audio:</strong> can the app's mic input be pointed at a virtual audio device (<a href="https://vb-audio.com/Cable/">VB-Cable</a>/<a href="https://existential.audio/blackhole/">BlackHole</a>/<a href="https://www.alsa-project.org/wiki/Loopback_Device">ALSA Loopback</a>) so ZPTTLink's audio bridge can feed it?</li>
+</ul>
+
+<p>Only Zello has been tested end-to-end so far; the others are expected to work based on how ZPTTLink's bridge actually operates (generic key/tap injection plus audio routing, not a per-app integration) but haven't all been verified by the maintainer. If you get one working — or hit a snag — <a href="https://github.com/maxhayim/ZPTTLink/issues">open an issue</a> and let us know.</p>
+
 <h2>Signal Flow Overview</h2>
 
 <pre>
@@ -65,6 +89,7 @@
 <h2>Features</h2>
 
 <ul>
+  <li><a href="#works-with-any-ptt-app">Works with any PTT app</a>, not just Zello — CB Talk, Voxer, TeamSpeak, Discord, and more, as long as it has a PTT trigger and an audio path</li>
   <li>Compatible with AIOC, CM108/CM119-based, DigiRig, and other USB serial/audio radio cables</li>
   <li>Detects PTT signals via USB serial (DigiRig DTR/RTS) or USB HID GPIO (CM108/CM119)</li>
   <li><strong>Multiple ways to trigger PTT in the Zello target, selectable via <code>injection_mode</code>:</strong>
@@ -252,7 +277,7 @@ source venv/bin/activate</code></pre>
 
 <h2>Android Runtime Targets</h2>
 
-<p>Zello can run in four different places relative to ZPTTLink. Which one you're using determines how PTT actually reaches it — set <code>injection_mode</code> (and <code>adb_serial</code>, if applicable) accordingly.</p>
+<p>Zello (or <a href="#works-with-any-ptt-app">whichever PTT app</a> you're bridging) can run in four different places relative to ZPTTLink. Which one you're using determines how PTT actually reaches it — set <code>injection_mode</code> (and <code>adb_serial</code>, if applicable) accordingly. The examples below use Zello since it's the most common case, but the same setup applies to any other PTT app running in the same place.</p>
 
 <h3>BlueStacks (macOS)</h3>
 
