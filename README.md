@@ -53,6 +53,8 @@
 
 <p>Only Zello has been tested end-to-end so far; the others are expected to work based on how ZPTTLink's bridge actually operates (generic key/tap injection plus audio routing, not a per-app integration) but haven't all been verified by the maintainer. If you get one working — or hit a snag — <a href="https://github.com/maxhayim/ZPTTLink/issues">open an issue</a> and let us know.</p>
 
+<p>This is also why <a href="docs/podroid-deployment.md">ZPTTLink on a Podroid-hosted Android phone</a> uses a native Linux PTT app instead of Zello — Podroid boots Alpine Linux, not Android, so an Android-only app can't run inside it, but any Linux-native PTT client is a perfectly normal target for the exact same trigger-plus-audio-path logic described above.</p>
+
 <h2>Signal Flow Overview</h2>
 
 <pre>
@@ -163,7 +165,9 @@
 
 <p><strong>Deploying to an unattended Raspberry Pi</strong> (e.g. boxed up at a remote site)? See the dedicated <a href="docs/raspberry-pi-repeater-deployment.md">Raspberry Pi deployment tutorial</a> — hardware, headless OS setup, Waydroid + Zello, systemd autostart with a watchdog, and outdoor/unattended hardening.</p>
 
-<p><strong>Deploying the <a href="#asterisk-usrp-backend">Asterisk backend</a> with no local hardware at all?</strong> See the dedicated <a href="docs/vps-deployment.md">VPS deployment tutorial</a> — running ZPTTLink and Zello (via docker-android) on a commodity cloud server, with no radio-side hardware or physical site involved. The steps below are the general/manual install; both tutorials build on them.</p>
+<p><strong>Deploying the <a href="#asterisk-usrp-backend">Asterisk backend</a> with no local hardware at all?</strong> See the dedicated <a href="docs/vps-deployment.md">VPS deployment tutorial</a> — running ZPTTLink and Zello (via docker-android) on a commodity cloud server, with no radio-side hardware or physical site involved.</p>
+
+<p><strong>Have a spare Android phone instead?</strong> See the dedicated <a href="docs/podroid-deployment.md">Podroid deployment tutorial</a> — <a href="https://github.com/ExTV/Podroid">Podroid</a> boots a real, rootless Alpine Linux VM on the phone, which ZPTTLink and a native Linux PTT app (not Zello — see <a href="#works-with-any-ptt-app">Works With Any PTT App</a>) can run inside directly, with optional USB passthrough for a physical radio interface. The steps below are the general/manual install; all three tutorials build on them.</p>
 
 <ol>
   <li>Install Python:
