@@ -21,7 +21,7 @@
 
 <h1>ZPTTLink</h1>
 
-<p>ZPTTLink is an open-source, all-in-one linking bridge. Deterministic DTR/RTS/CM108 hardware PTT or a network Asterisk (USRP) backend, with pynput/ydotool/ADB key injection for BlueStacks, Waydroid, and docker-android. Compatible radio interfaces include the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>, CM108/CM119-based USB sound fobs, DigiRig, and other USB serial/audio radio cables — see <a href="#requirements">Requirements</a>.</p>
+<p>ZPTTLink is an open-source, all-in-one linking bridge. Deterministic DTR/RTS/CM108 hardware PTT or a network Asterisk (USRP) backend, with pynput/ydotool/ADB key injection for BlueStacks, Mac.apk, Waydroid, and docker-android. Compatible radio interfaces include the <a href="https://github.com/skuep/AIOC">AIOC (All-In-One Cable)</a>, CM108/CM119-based USB sound fobs, DigiRig, and other USB serial/audio radio cables — see <a href="#requirements">Requirements</a>.</p>
 
 <p>Both the radio side and the Zello side are configurable independently: pick a hardware backend or <a href="#asterisk-usrp-backend">Asterisk (USRP)</a> for the radio side, and BlueStacks/Waydroid/docker-android for where Zello runs — see <a href="#android-runtime-targets">Android Runtime Targets</a>.</p>
 
@@ -281,7 +281,7 @@ source venv/bin/activate</code></pre>
 
 <h2>Android Runtime Targets</h2>
 
-<p>Zello (or <a href="#works-with-any-ptt-app">whichever PTT app</a> you're bridging) can run in four different places relative to ZPTTLink. Which one you're using determines how PTT actually reaches it — set <code>injection_mode</code> (and <code>adb_serial</code>, if applicable) accordingly. The examples below use Zello since it's the most common case, but the same setup applies to any other PTT app running in the same place.</p>
+<p>Zello (or <a href="#works-with-any-ptt-app">whichever PTT app</a> you're bridging) can run in five different places relative to ZPTTLink. Which one you're using determines how PTT actually reaches it — set <code>injection_mode</code> (and <code>adb_serial</code>, if applicable) accordingly. The examples below use Zello since it's the most common case, but the same setup applies to any other PTT app running in the same place.</p>
 
 <h3>BlueStacks (macOS)</h3>
 
@@ -290,6 +290,18 @@ source venv/bin/activate</code></pre>
   <li>Install BlueStacks, install Zello inside it, and set Zello's PTT hotkey to match <code>ptt_hotkey</code> in your config (default <code>F9</code>)</li>
   <li>Route audio through <a href="https://existential.audio/blackhole/">BlackHole</a>: BlueStacks' input device set to the BlackHole loopback, ZPTTLink's <code>audio_output_index</code> pointed at the same BlackHole device</li>
   <li>macOS requires granting Accessibility permission to the terminal/app running ZPTTLink for pynput key injection to work at all (System Settings → Privacy & Security → Accessibility)</li>
+</ul>
+
+<h3>Mac.apk (macOS, Apple Silicon)</h3>
+
+<p><a href="https://github.com/kksimp/Mac.apk">Mac.apk</a> runs Android apps as genuine native macOS processes — no Android emulator, no VM, no Linux underneath. Each app gets a real Mac window and plays audio through macOS directly, which is a different (and on Apple Silicon, lighter-weight) model than BlueStacks' full Android-emulator approach. Requires <strong>macOS 26.4 (Tahoe) or newer and Apple Silicon</strong> — no Intel Mac support — and is alpha software from its own maintainer as of this writing.</p>
+
+<ul>
+  <li><code>injection_mode: pynput</code> (default on macOS) — Mac.apk's own docs describe its default input mode as "the keyboard reaches the app as a keyboard," i.e. standard macOS keyboard events to the focused window, the same mechanism BlueStacks uses above</li>
+  <li>Install Mac.apk, install Zello's APK through it (drag the APK onto the Mac.apk window), and set Zello's PTT hotkey to match <code>ptt_hotkey</code> in your config (default <code>F9</code>) — Zello's window needs focus for the hotkey to reach it, same as any native Mac app</li>
+  <li>macOS requires granting Accessibility permission to the terminal/app running ZPTTLink for pynput key injection to work at all (System Settings → Privacy & Security → Accessibility), same requirement as BlueStacks</li>
+  <li><strong>Audio routing is less settled than BlueStacks':</strong> Mac.apk has no documented in-app "audio output device" picker the way an Android emulator does — audio appears to just play through whatever macOS's standard output device is. The likely approach is setting <a href="https://existential.audio/blackhole/">BlackHole</a> as the system output/input device while Zello's window is active, rather than pointing an in-app setting at it; this hasn't been verified by the maintainer, so check Mac.apk's own <a href="https://github.com/kksimp/Mac.apk/wiki">wiki</a> if it doesn't work as described</li>
+  <li>No ADB on this target — Mac.apk doesn't run a real Android OS instance, so <code>injection_mode: adb</code> doesn't apply here the way it does for the docker-android targets below</li>
 </ul>
 
 <h3>Waydroid (Linux)</h3>
